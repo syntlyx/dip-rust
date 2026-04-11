@@ -121,7 +121,12 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
                 let tls_stream = match tls_acceptor.accept(stream).await {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("TLS error: {e}");
+                        // Client-side alerts (CertificateUnknown, UnknownCa, etc.)
+                        // mean the client doesn't trust our CA — not a server error.
+                        // Suppress these to keep the log clean.
+                        if !is_client_tls_rejection(&e.to_string()) {
+                            eprintln!("TLS error: {e}");
+                        }
                         return;
                     }
                 };
@@ -498,6 +503,16 @@ fn access_log(
     let ms = elapsed.as_millis();
     let status_str = status.as_u16().to_string();
     eprintln!("{now}  {method:<6} {host}{path}  {status_str}  {ms}ms");
+}
+
+/// Returns true for TLS alerts that originate from the client rejecting our cert.
+/// These are normal when the client doesn't trust the dip CA and shouldn't pollute logs.
+fn is_client_tls_rejection(msg: &str) -> bool {
+    msg.contains("CertificateUnknown")
+        || msg.contains("UnknownCa")
+        || msg.contains("CertificateExpired")
+        || msg.contains("BadCertificate")
+        || msg.contains("received fatal alert")
 }
 
 fn error_resp(status: StatusCode, body: String) -> Response<Full<Bytes>> {
