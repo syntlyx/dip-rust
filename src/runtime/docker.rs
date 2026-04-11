@@ -1,14 +1,12 @@
 use std::io::BufRead;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::project::ProjectConfig;
-use crate::utils::output::colorize_compose_line;
+use crate::utils::log_verbose;
+use crate::utils::output::{colorize_compose_line, make_spinner};
 
-use super::ContainerRuntime;
+use super::{BackendCtx, ContainerRuntime};
 
 pub struct DockerRuntime;
 
@@ -28,27 +26,18 @@ impl ContainerRuntime for DockerRuntime {
         }
     }
 
-    fn compose_run(
-        &self,
-        project: &ProjectConfig,
-        args: &[&str],
-        msg: &str,
-        verbose: bool,
-        no_color: bool,
-    ) -> Result<()> {
-        let compose_file = project.compose_file.to_string_lossy().into_owned();
+    fn compose_run(&self, ctx: &BackendCtx, args: &[&str], msg: &str) -> Result<()> {
+        let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
         cmd_args.extend_from_slice(args);
 
-        if verbose {
-            eprintln!("  docker {}", cmd_args.join(" "));
-        }
+        log_cmd(ctx.verbose, &cmd_args);
 
-        let pb = spinner(msg, no_color);
+        let pb = make_spinner(msg);
 
         let mut child = Command::new("docker")
             .args(&cmd_args)
-            .envs(project.get_env())
+            .envs(ctx.project.get_env())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -57,7 +46,7 @@ impl ContainerRuntime for DockerRuntime {
         let stderr = child.stderr.take().unwrap();
 
         let pb_out = pb.clone();
-        let nc = no_color;
+        let nc = ctx.no_color;
         let stdout_thread = std::thread::spawn(move || {
             for line in std::io::BufReader::new(stdout)
                 .lines()
@@ -80,8 +69,12 @@ impl ContainerRuntime for DockerRuntime {
         });
 
         let status = child.wait()?;
-        stdout_thread.join().ok();
-        stderr_thread.join().ok();
+        if stdout_thread.join().is_err() {
+            log_verbose(ctx.verbose, "  [warn] stdout reader thread panicked");
+        }
+        if stderr_thread.join().is_err() {
+            log_verbose(ctx.verbose, "  [warn] stderr reader thread panicked");
+        }
         pb.finish_and_clear();
 
         if !status.success() {
@@ -90,18 +83,16 @@ impl ContainerRuntime for DockerRuntime {
         Ok(())
     }
 
-    fn compose_stream(&self, project: &ProjectConfig, args: &[&str], verbose: bool) -> Result<()> {
-        let compose_file = project.compose_file.to_string_lossy().into_owned();
+    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str]) -> Result<()> {
+        let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
         cmd_args.extend_from_slice(args);
 
-        if verbose {
-            eprintln!("  docker {}", cmd_args.join(" "));
-        }
+        log_cmd(ctx.verbose, &cmd_args);
 
         let status = Command::new("docker")
             .args(&cmd_args)
-            .envs(project.get_env())
+            .envs(ctx.project.get_env())
             .status()?;
 
         let code = status.code().unwrap_or(0);
@@ -111,23 +102,16 @@ impl ContainerRuntime for DockerRuntime {
         Ok(())
     }
 
-    fn compose_capture(
-        &self,
-        project: &ProjectConfig,
-        args: &[&str],
-        verbose: bool,
-    ) -> Result<String> {
-        let compose_file = project.compose_file.to_string_lossy().into_owned();
+    fn compose_capture(&self, ctx: &BackendCtx, args: &[&str]) -> Result<String> {
+        let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
         cmd_args.extend_from_slice(args);
 
-        if verbose {
-            eprintln!("  docker {}", cmd_args.join(" "));
-        }
+        log_cmd(ctx.verbose, &cmd_args);
 
         let output = Command::new("docker")
             .args(&cmd_args)
-            .envs(project.get_env())
+            .envs(ctx.project.get_env())
             .output()?;
 
         if !output.status.success() {
@@ -148,8 +132,6 @@ impl ContainerRuntime for DockerRuntime {
 
     fn raw_stream(&self, args: &[&str]) -> Result<()> {
         let status = Command::new("docker").args(args).status()?;
-        // Exit code 130 = Ctrl+C (SIGINT) — treat as success so callers don't
-        // print a spurious error after the user intentionally quits.
         let code = status.code().unwrap_or(0);
         if !status.success() && code != 130 {
             anyhow::bail!("docker command failed (exit {})", status);
@@ -160,18 +142,8 @@ impl ContainerRuntime for DockerRuntime {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-fn spinner(msg: &str, no_color: bool) -> ProgressBar {
-    let pb = ProgressBar::new_spinner();
-    if !no_color {
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.green} {msg}")
-                .unwrap(),
-        );
-    }
-    pb.set_message(msg.to_string());
-    pb.enable_steady_tick(Duration::from_millis(80));
-    pb
+fn log_cmd(verbose: bool, args: &[&str]) {
+    log_verbose(verbose, &format!("  docker {}", args.join(" ")));
 }
 
 fn is_env_warning(line: &str) -> bool {

@@ -1,3 +1,5 @@
+pub mod containers;
+pub mod env;
 pub mod output;
 
 use std::path::Path;
@@ -16,6 +18,17 @@ pub fn ensure_executable(path: &Path) -> Result<()> {
         std::fs::set_permissions(path, perms)?;
     }
     Ok(())
+}
+
+/// Print `msg` to stderr only when `verbose` is true.
+///
+/// Prefer this over an inline `if verbose { eprintln!(...) }` block to keep
+/// call sites clean. The message is only formatted when it will be printed.
+#[inline]
+pub fn log_verbose(verbose: bool, msg: &str) {
+    if verbose {
+        eprintln!("{msg}");
+    }
 }
 
 /// Prompt the user for a yes/no confirmation. Returns `true` for "y" / "yes".

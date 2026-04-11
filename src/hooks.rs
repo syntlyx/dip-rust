@@ -18,6 +18,7 @@ use anyhow::Result;
 
 use crate::project::ProjectConfig;
 use crate::utils::ensure_executable;
+use crate::utils::env;
 use crate::utils::output::Output;
 
 /// Run `.dip/hooks/pre-start` if it exists.
@@ -28,6 +29,25 @@ pub fn run_pre_start(
     no_color: bool,
 ) -> Result<HashMap<String, String>> {
     run_named_hook("pre-start", project, verbose, no_color)
+}
+
+/// Run the `pre-start` hook and merge any exported env vars into the project.
+///
+/// This is the canonical call site for all commands that start containers
+/// (`start`, `restart`, `run`). Prints an info line when the hook exports
+/// variables so the user knows credentials were injected.
+pub fn apply_pre_start(
+    project: &mut ProjectConfig,
+    out: &Output,
+    verbose: bool,
+    no_color: bool,
+) -> Result<()> {
+    let hook_env = run_pre_start(project, verbose, no_color)?;
+    if !hook_env.is_empty() {
+        out.info(&format!("Hook exported {} variable(s)", hook_env.len()));
+        project.merge_env(hook_env);
+    }
+    Ok(())
 }
 
 /// Run `.dip/hooks/post-start` if it exists (best-effort, errors are warnings).
@@ -71,9 +91,7 @@ fn run_hook(
     project: &ProjectConfig,
     verbose: bool,
 ) -> Result<HashMap<String, String>> {
-    if verbose {
-        eprintln!("Hook: {}", path.display());
-    }
+    crate::utils::log_verbose(verbose, &format!("Hook: {}", path.display()));
 
     ensure_executable(path)?;
 
@@ -94,72 +112,5 @@ fn run_hook(
 
     // Parse stdout as env vars
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_env_output(&stdout))
-}
-
-/// Parse lines of the form:
-///   KEY=VALUE
-///   export KEY=VALUE
-///   export KEY="VALUE"
-pub(crate) fn parse_env_output(output: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // Strip leading `export ` keyword
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim().to_string();
-            // Strip surrounding quotes from value
-            let value = value
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string();
-            map.insert(key, value);
-        }
-    }
-    map
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plain_key_value() {
-        let out = parse_env_output("FOO=bar\nBAZ=qux\n");
-        assert_eq!(out["FOO"], "bar");
-        assert_eq!(out["BAZ"], "qux");
-    }
-
-    #[test]
-    fn export_prefix_stripped() {
-        let out = parse_env_output("export AWS_ACCESS_KEY_ID=AKIA123\nexport AWS_SECRET=secret\n");
-        assert_eq!(out["AWS_ACCESS_KEY_ID"], "AKIA123");
-        assert_eq!(out["AWS_SECRET"], "secret");
-    }
-
-    #[test]
-    fn quoted_values_stripped() {
-        let out = parse_env_output("export TOKEN=\"abc123\"\nKEY='xyz'\n");
-        assert_eq!(out["TOKEN"], "abc123");
-        assert_eq!(out["KEY"], "xyz");
-    }
-
-    #[test]
-    fn comments_and_blank_lines_ignored() {
-        let out = parse_env_output("# comment\n\nFOO=bar\n");
-        assert_eq!(out.len(), 1);
-        assert_eq!(out["FOO"], "bar");
-    }
-
-    #[test]
-    fn value_with_equals_sign() {
-        // Only the first '=' is the separator
-        let out = parse_env_output("JDBC=jdbc:mysql://host/db?user=root\n");
-        assert_eq!(out["JDBC"], "jdbc:mysql://host/db?user=root");
-    }
+    Ok(env::parse_env_str(&stdout))
 }

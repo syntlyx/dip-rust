@@ -6,6 +6,19 @@ use anyhow::Result;
 
 use crate::project::ProjectConfig;
 
+// ─── backend context ──────────────────────────────────────────────────────────
+
+/// Execution context passed to `ContainerRuntime` methods.
+///
+/// Bundles the three parameters that every compose call needs so trait
+/// signatures stay compact. Commands never construct this directly — the
+/// `Runtime` wrapper creates it from its own fields.
+pub(crate) struct BackendCtx<'a> {
+    pub project: &'a ProjectConfig,
+    pub verbose: bool,
+    pub no_color: bool,
+}
+
 // ─── trait ────────────────────────────────────────────────────────────────────
 
 /// Abstraction over container runtimes (Docker Compose, Apple Container, …).
@@ -17,25 +30,13 @@ pub trait ContainerRuntime: Send + Sync {
     fn check_daemon(&self) -> Result<()>;
 
     /// Run a compose command, show a spinner, stream output above it.
-    fn compose_run(
-        &self,
-        project: &ProjectConfig,
-        args: &[&str],
-        msg: &str,
-        verbose: bool,
-        no_color: bool,
-    ) -> Result<()>;
+    fn compose_run(&self, ctx: &BackendCtx, args: &[&str], msg: &str) -> Result<()>;
 
     /// Run a compose command with full stdio passthrough (interactive / logs).
-    fn compose_stream(&self, project: &ProjectConfig, args: &[&str], verbose: bool) -> Result<()>;
+    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str]) -> Result<()>;
 
     /// Run a compose command and capture stdout as a String.
-    fn compose_capture(
-        &self,
-        project: &ProjectConfig,
-        args: &[&str],
-        verbose: bool,
-    ) -> Result<String>;
+    fn compose_capture(&self, ctx: &BackendCtx, args: &[&str]) -> Result<String>;
 
     /// Run a raw runtime command and capture stdout.
     fn raw_capture(&self, args: &[&str]) -> Result<String>;
@@ -69,21 +70,26 @@ impl Runtime {
         detect().check_daemon()
     }
 
+    fn ctx(&self) -> BackendCtx<'_> {
+        BackendCtx {
+            project: &self.project,
+            verbose: self.verbose,
+            no_color: self.no_color,
+        }
+    }
+
     // ── compose delegates ──────────────────────────────────────────────────
 
     pub fn compose_run(&self, args: &[&str], msg: &str) -> Result<()> {
-        self.backend
-            .compose_run(&self.project, args, msg, self.verbose, self.no_color)
+        self.backend.compose_run(&self.ctx(), args, msg)
     }
 
     pub fn compose_stream(&self, args: &[&str]) -> Result<()> {
-        self.backend
-            .compose_stream(&self.project, args, self.verbose)
+        self.backend.compose_stream(&self.ctx(), args)
     }
 
     pub fn compose_capture(&self, args: &[&str]) -> Result<String> {
-        self.backend
-            .compose_capture(&self.project, args, self.verbose)
+        self.backend.compose_capture(&self.ctx(), args)
     }
 
     pub fn raw_capture(&self, args: &[&str]) -> Result<String> {
@@ -111,22 +117,10 @@ impl Runtime {
 // ─── detection ────────────────────────────────────────────────────────────────
 
 /// Auto-detect which runtime is available.
-/// Prefers Docker (established + compose support); falls back to Apple Container.
+///
+/// Currently only Docker is supported. If `docker` is not found on PATH the
+/// function still returns a `DockerRuntime` — `check_daemon()` will then emit
+/// a clear "Docker daemon is not running" error at the call site.
 fn detect() -> Box<dyn ContainerRuntime> {
-    if cmd_exists("docker") {
-        return Box::new(DockerRuntime);
-    }
-    // Default — will produce a clear error at check_daemon()
     Box::new(DockerRuntime)
-}
-
-pub fn cmd_exists(cmd: &str) -> bool {
-    use std::process::Stdio;
-    std::process::Command::new("which")
-        .arg(cmd)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }

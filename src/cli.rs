@@ -31,8 +31,21 @@ pub enum Commands {
         template: Option<String>,
     },
 
+    /// List all dip projects found on this machine
+    Ls {
+        /// Root directory to scan (defaults to home directory)
+        #[arg(long)]
+        root: Option<std::path::PathBuf>,
+    },
+
     /// Show resolved project environment variables
     Env,
+
+    /// Open the project URL in the default browser
+    Open {
+        /// Service name or domain fragment (opens main domain if omitted)
+        service: Option<String>,
+    },
 
     /// Generate shell completions
     Completions {
@@ -42,6 +55,9 @@ pub enum Commands {
 
     /// Show system and Docker environment information
     Sysinfo,
+
+    /// Show TLS certificate info (validity, SANs, keychain trust)
+    Cert,
 
     // ── Container lifecycle ────────────────────────────────────────────────
     /// Start all project containers (runs pre-start hook if present)
@@ -195,6 +211,15 @@ pub enum ProxyCommands {
     Remove {
         /// Domain pattern to remove
         domain: String,
+    },
+    /// Show or update DNS / port configuration
+    Config {
+        /// TLD(s) to resolve → 127.0.0.1, comma-separated (e.g. "test,local")
+        #[arg(long)]
+        tld: Option<String>,
+        /// Port the built-in DNS server listens on (must match /etc/resolver files)
+        #[arg(long)]
+        dns_port: Option<u16>,
     },
     /// Run the proxy server in the foreground (used internally by daemon)
     #[command(hide = true)]

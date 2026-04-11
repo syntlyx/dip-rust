@@ -83,6 +83,9 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
 
     let https_port = config.https_port;
 
+    // Clone routes for the watcher before https_task consumes them via `move`
+    let watcher_routes = routes.clone();
+
     // ── HTTP: redirect to HTTPS ───────────────────────────────────────────
     let http_task = tokio::spawn(async move {
         loop {
@@ -145,9 +148,27 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
         }
     });
 
+    // ── Docker event watcher — auto-syncs routes on container start/stop ─
+    let watcher_task = tokio::spawn(async move {
+        super::watcher::run(watcher_routes).await;
+    });
+
+    // ── Built-in DNS server ───────────────────────────────────────────────
+    let dns_task = {
+        let dns_port = config.dns_port;
+        let tlds = config.tlds.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::dns::server::run(dns_port, tlds).await {
+                eprintln!("dip-dns: {e}");
+            }
+        })
+    };
+
     tokio::try_join!(
         async { http_task.await.map_err(|e| anyhow::anyhow!(e)) },
         async { https_task.await.map_err(|e| anyhow::anyhow!(e)) },
+        async { dns_task.await.map_err(|e| anyhow::anyhow!(e)) },
+        async { watcher_task.await.map_err(|e| anyhow::anyhow!(e)) },
     )?;
 
     Ok(())

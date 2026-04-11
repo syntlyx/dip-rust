@@ -131,6 +131,10 @@ fn curl_get(url: &str) -> Result<String> {
 }
 
 fn curl_download(url: &str, dest: &std::path::Path) -> Result<()> {
+    let dest_str = dest
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Download path is not valid UTF-8: {}", dest.display()))?;
+
     let status = std::process::Command::new("curl")
         .args([
             "-fSL",
@@ -138,7 +142,7 @@ fn curl_download(url: &str, dest: &std::path::Path) -> Result<()> {
             "--user-agent",
             concat!("dip/", env!("CARGO_PKG_VERSION")),
             "-o",
-            dest.to_str().unwrap(),
+            dest_str,
             url,
         ])
         .status()

@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "dip"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -317,6 +317,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "toml",
+ "x509-parser",
 ]
 
 [[package]]

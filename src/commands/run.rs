@@ -1,24 +1,12 @@
 use anyhow::Result;
 
-use crate::hooks;
-use crate::project::ProjectConfig;
-use crate::runtime::Runtime;
+use crate::commands::ctx::Ctx;
 use crate::utils::ensure_executable;
-use crate::utils::output::Output;
 
 pub fn run(script: &str, args: &[String], verbose: bool, no_color: bool) -> Result<()> {
-    let out = Output::new(no_color);
-    Runtime::check_daemon()?;
+    let ctx = Ctx::load(verbose, no_color)?;
 
-    let mut project = ProjectConfig::load()?;
-
-    // Also run pre-start hook so scripts get AWS credentials etc.
-    let hook_env = hooks::run_pre_start(&project, verbose, no_color)?;
-    if !hook_env.is_empty() {
-        project.merge_env(hook_env);
-    }
-
-    let commands_dir = project.dip_dir.join("commands");
+    let commands_dir = ctx.rt.project.dip_dir.join("commands");
     let script_path = commands_dir.join(script);
 
     if !script_path.exists() {
@@ -43,7 +31,7 @@ pub fn run(script: &str, args: &[String], verbose: bool, no_color: bool) -> Resu
     ensure_executable(&script_path)?;
 
     if verbose {
-        out.info(&format!(
+        ctx.out.info(&format!(
             "Running: {} {}",
             script_path.display(),
             args.join(" ")
@@ -52,7 +40,7 @@ pub fn run(script: &str, args: &[String], verbose: bool, no_color: bool) -> Resu
 
     let status = std::process::Command::new(&script_path)
         .args(args)
-        .envs(project.get_env())
+        .envs(ctx.rt.project.get_env())
         .status()?;
 
     if !status.success() {

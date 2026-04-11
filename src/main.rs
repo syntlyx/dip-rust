@@ -22,9 +22,12 @@ fn main() {
 
     let result = match cli.command {
         Commands::Init { template } => commands::init::run(template.as_deref(), nc),
+        Commands::Ls { root } => commands::ls::run(root, nc),
         Commands::Env => commands::env::run(nc),
+        Commands::Open { service } => commands::open::run(service.as_deref(), nc),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Sysinfo => commands::sysinfo::run(v, nc),
+        Commands::Cert => commands::cert::run(nc),
 
         // Lifecycle
         Commands::Start => commands::start::run(v, nc),
@@ -70,6 +73,9 @@ fn main() {
                 commands::proxy::run_add(&domain, &upstream, nc)
             }
             ProxyCommands::Remove { domain } => commands::proxy::run_remove(&domain, nc),
+            ProxyCommands::Config { tld, dns_port } => {
+                commands::proxy::run_config(tld.as_deref(), dns_port, nc)
+            }
             ProxyCommands::Serve => commands::proxy::run_serve(nc),
         },
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::config;
+use crate::utils::env;
 
 #[derive(Clone)]
 pub struct ProjectConfig {
@@ -35,7 +36,7 @@ impl ProjectConfig {
             }
         }
 
-        let env_vars = parse_env_file(&env_file)?;
+        let env_vars = env::parse_env_file(&env_file)?;
 
         let project_name = env_vars
             .get(config::ENV_PROJECT_NAME)
@@ -97,23 +98,6 @@ impl ProjectConfig {
 
         env
     }
-}
-
-fn parse_env_file(path: &PathBuf) -> Result<HashMap<String, String>> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
-    Ok(map)
 }
 
 fn find_project_root() -> Option<PathBuf> {

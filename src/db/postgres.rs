@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{DbBackend, DbConfig, is_gzipped};
+use super::{
+    DbBackend, DbConfig, create_output_file, docker_cp_to_container, docker_rm_remote, is_gzipped,
+    remote_tmp_path,
+};
 use crate::utils::output::Output;
 
 pub struct PostgresBackend;
@@ -25,9 +28,7 @@ impl DbBackend for PostgresBackend {
             output_path.display()
         ));
 
-        let output_file = std::fs::File::create(output_path).map_err(|e| {
-            anyhow::anyhow!("Cannot create output file {}: {e}", output_path.display())
-        })?;
+        let output_file = create_output_file(output_path)?;
 
         let status = if is_gzipped(output_path) {
             std::process::Command::new("docker")
@@ -77,23 +78,10 @@ impl DbBackend for PostgresBackend {
         out: &Output,
     ) -> Result<()> {
         let gz = is_gzipped(input_path);
-        let remote = if gz {
-            "/tmp/import.sql.gz"
-        } else {
-            "/tmp/import.sql"
-        };
+        let remote = remote_tmp_path(gz);
 
         out.info("Copying dump file to container...");
-        let cp_status = std::process::Command::new("docker")
-            .args([
-                "cp",
-                input_path.to_str().unwrap(),
-                &format!("{container_id}:{remote}"),
-            ])
-            .status()?;
-        if !cp_status.success() {
-            anyhow::bail!("Failed to copy dump file to container");
-        }
+        docker_cp_to_container(container_id, input_path, remote)?;
 
         out.info(&format!(
             "Importing into PostgreSQL database '{}'...",
@@ -121,14 +109,12 @@ impl DbBackend for PostgresBackend {
                     "-d",
                     &config.db_name,
                     "-f",
-                    "/tmp/import.sql",
+                    remote,
                 ])
                 .status()?
         };
 
-        let _ = std::process::Command::new("docker")
-            .args(["exec", container_id, "rm", "-f", remote])
-            .status();
+        docker_rm_remote(container_id, remote);
 
         if import_status.success() {
             out.success("Database imported successfully");

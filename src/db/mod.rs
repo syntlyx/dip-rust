@@ -12,6 +12,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::project::ProjectConfig;
+use crate::utils::env;
 use crate::utils::output::Output;
 
 // ─── config ──────────────────────────────────────────────────────────────────
@@ -72,9 +73,7 @@ pub fn detect_by_labels(project: &ProjectConfig, verbose: bool) -> Result<Vec<Db
         return Ok(vec![]);
     }
 
-    if verbose {
-        eprintln!("  docker inspect {}", ids.join(" "));
-    }
+    crate::utils::log_verbose(verbose, &format!("  docker inspect {}", ids.join(" ")));
 
     let mut inspect_args = vec!["inspect"];
     inspect_args.extend_from_slice(&ids);
@@ -111,7 +110,7 @@ pub fn detect_by_labels(project: &ProjectConfig, verbose: bool) -> Result<Vec<Db
             .to_string();
 
         // Parse env array ["KEY=VALUE", ...] into a map
-        let env = parse_container_env(&c["Config"]["Env"]);
+        let env = env::parse_env_json_array(&c["Config"]["Env"]);
 
         let (backend, config) = match db_type {
             "mysql" => {
@@ -173,24 +172,51 @@ pub fn detect_by_labels(project: &ProjectConfig, verbose: bool) -> Result<Vec<Db
     Ok(services)
 }
 
-fn parse_container_env(env_array: &Value) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    if let Some(arr) = env_array.as_array() {
-        for entry in arr {
-            if let Some(s) = entry.as_str()
-                && let Some((k, v)) = s.split_once('=')
-            {
-                map.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
-    map
-}
-
 // ─── compression helpers ──────────────────────────────────────────────────────
 
 pub fn is_gzipped(path: &Path) -> bool {
     path.to_str().map(|s| s.ends_with(".gz")).unwrap_or(false)
+}
+
+/// Returns the remote tmp path to use when copying a dump into a container.
+pub fn remote_tmp_path(gz: bool) -> &'static str {
+    if gz {
+        "/tmp/import.sql.gz"
+    } else {
+        "/tmp/import.sql"
+    }
+}
+
+// ─── shared docker helpers ────────────────────────────────────────────────────
+
+/// Create the local output file for a dump, returning an error with the path
+/// in the message if it fails.
+pub fn create_output_file(path: &Path) -> Result<std::fs::File> {
+    std::fs::File::create(path)
+        .map_err(|e| anyhow::anyhow!("Cannot create output file {}: {e}", path.display()))
+}
+
+/// Copy a local file into a container via `docker cp`.
+pub fn docker_cp_to_container(container_id: &str, local: &Path, remote: &str) -> Result<()> {
+    let status = std::process::Command::new("docker")
+        .args([
+            "cp",
+            local.to_str().unwrap_or_default(),
+            &format!("{container_id}:{remote}"),
+        ])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("Failed to copy dump file to container")
+    }
+}
+
+/// Remove a file inside a container (best-effort, errors are silently ignored).
+pub fn docker_rm_remote(container_id: &str, remote: &str) {
+    let _ = std::process::Command::new("docker")
+        .args(["exec", container_id, "rm", "-f", remote])
+        .status();
 }
 
 // ─── legacy env-based detection ──────────────────────────────────────────────
@@ -297,28 +323,5 @@ mod tests {
     fn empty_env_returns_error() {
         let env = HashMap::new();
         assert!(detect(&env).is_err());
-    }
-
-    // ── parse_container_env() ─────────────────────────────────────────────────
-
-    #[test]
-    fn parses_env_array() {
-        let json = serde_json::json!(["MYSQL_DATABASE=mydb", "MYSQL_ROOT_PASSWORD=secret"]);
-        let map = parse_container_env(&json);
-        assert_eq!(map["MYSQL_DATABASE"], "mydb");
-        assert_eq!(map["MYSQL_ROOT_PASSWORD"], "secret");
-    }
-
-    #[test]
-    fn env_value_with_equals_sign() {
-        let json = serde_json::json!(["JDBC=jdbc:mysql://host/db?user=root"]);
-        let map = parse_container_env(&json);
-        assert_eq!(map["JDBC"], "jdbc:mysql://host/db?user=root");
-    }
-
-    #[test]
-    fn null_env_returns_empty_map() {
-        let map = parse_container_env(&serde_json::Value::Null);
-        assert!(map.is_empty());
     }
 }

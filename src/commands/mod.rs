@@ -1,11 +1,15 @@
 pub mod build;
+pub mod cert;
 pub mod cleanup;
 pub mod completions;
+pub mod ctx;
 pub mod db;
 pub mod env;
 pub mod health;
 pub mod init;
 pub mod logs;
+pub mod ls;
+pub mod open;
 pub mod proxy;
 pub mod prune;
 pub mod pull;

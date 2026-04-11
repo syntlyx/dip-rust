@@ -13,6 +13,12 @@ pub struct ProxyConfig {
     /// Port for HTTPS
     #[serde(default = "default_https_port")]
     pub https_port: u16,
+    /// Built-in DNS server port (must match /etc/resolver/<tld>)
+    #[serde(default = "default_dns_port")]
+    pub dns_port: u16,
+    /// TLDs resolved by the built-in DNS server → 127.0.0.1
+    #[serde(default = "default_tlds")]
+    pub tlds: Vec<String>,
     /// Routing rules — exact matches always beat wildcards
     #[serde(default)]
     pub routes: Vec<Route>,
@@ -23,6 +29,8 @@ impl Default for ProxyConfig {
         Self {
             http_port: 80,
             https_port: 443,
+            dns_port: 5354,
+            tlds: default_tlds(),
             routes: vec![],
         }
     }
@@ -33,6 +41,12 @@ fn default_http_port() -> u16 {
 }
 fn default_https_port() -> u16 {
     443
+}
+fn default_dns_port() -> u16 {
+    5354
+}
+fn default_tlds() -> Vec<String> {
+    vec!["test".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +72,10 @@ pub fn load() -> Result<ProxyConfig> {
 
 pub fn save(config: &ProxyConfig) -> Result<()> {
     let path = config_path();
-    std::fs::create_dir_all(path.parent().unwrap())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid proxy config path: {}", path.display()))?;
+    std::fs::create_dir_all(dir)?;
     let content = toml::to_string_pretty(config)?;
     std::fs::write(&path, content)?;
     Ok(())
