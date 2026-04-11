@@ -1,0 +1,28 @@
+{
+  "languages": {
+    "Rust": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+    },
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy",
+        },
+        "cargo": {
+          "features": "all",
+        },
+        "inlayHints": {
+          "parameterHints": { "enable": false },
+          "typeHints": { "enable": true },
+          "chainingHints": { "enable": true },
+        },
+        "procMacro": {
+          "enable": true,
+        },
+      },
+    },
+  },
+}
