@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -25,6 +26,15 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a new dip project in the current directory
     Init,
+
+    /// Show resolved project environment variables
+    Env,
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
 
     /// Show system and Docker environment information
     Sysinfo,
@@ -126,6 +136,8 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum DbCommands {
+    /// List detected database services
+    List,
     /// Export the project database to a dump file
     Dump {
         /// Output file path

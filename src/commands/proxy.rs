@@ -175,24 +175,22 @@ pub fn run_status(no_color: bool) -> Result<()> {
     match daemon_pid() {
         Some(pid) => {
             let cfg = config::load()?;
-            println!("{}", "─".repeat(60));
-            println!("  {}", "dip proxy".bold().green());
-            println!("{}", "─".repeat(60));
-            println!(
-                "  {:18} {} (PID {})",
-                "Status:".dimmed(),
-                "running".green().bold(),
-                pid
-            );
-            println!(
-                "  {:18} :{} → :{}",
-                "Ports:".dimmed(),
-                cfg.http_port,
-                cfg.https_port
-            );
-            println!("  {:18} {} route(s)", "Routes:".dimmed(), cfg.routes.len());
-            println!("  {:18} {}", "Logs:".dimmed(), log_file().display());
-            println!("{}", "─".repeat(60));
+            out.section("proxy", || {
+                println!(
+                    "  {:18} {} (PID {})",
+                    "Status:".dimmed(),
+                    "running".green().bold(),
+                    pid
+                );
+                println!(
+                    "  {:18} :{} → :{}",
+                    "Ports:".dimmed(),
+                    cfg.http_port,
+                    cfg.https_port
+                );
+                println!("  {:18} {} route(s)", "Routes:".dimmed(), cfg.routes.len());
+                println!("  {:18} {}", "Logs:".dimmed(), log_file().display());
+            });
         }
         None => out.warning("Proxy is not running"),
     }
@@ -200,29 +198,31 @@ pub fn run_status(no_color: bool) -> Result<()> {
 }
 
 /// `dip proxy routes`
-pub fn run_routes(_no_color: bool) -> Result<()> {
+pub fn run_routes(no_color: bool) -> Result<()> {
+    let out = Output::new(no_color);
     let cfg = config::load()?;
-    println!("{}", "─".repeat(65));
-    println!("  {}", "dip proxy routes".bold().green());
-    println!("{}", "─".repeat(65));
-    if cfg.routes.is_empty() {
-        println!("  (no routes — run `dip start` inside a project to populate)");
-    } else {
-        for r in &cfg.routes {
-            let kind = if r.domain.contains('*') {
-                "wildcard"
-            } else {
-                "exact   "
-            };
+    out.section("proxy routes", || {
+        if cfg.routes.is_empty() {
             println!(
-                "  {} {:38} → {}",
-                kind.dimmed(),
-                r.domain.cyan(),
-                r.upstream.green()
+                "  {}",
+                "no routes — run `dip start` inside a project to populate".dimmed()
             );
+        } else {
+            for r in &cfg.routes {
+                let kind = if r.domain.contains('*') {
+                    "wildcard"
+                } else {
+                    "exact   "
+                };
+                println!(
+                    "  {} {:38} → {}",
+                    kind.dimmed(),
+                    r.domain.cyan(),
+                    r.upstream.green()
+                );
+            }
         }
-    }
-    println!("{}", "─".repeat(65));
+    });
     Ok(())
 }
 
@@ -528,7 +528,7 @@ fn discover_routes(project: &ProjectConfig) -> Result<Vec<Route>> {
 ///
 /// Each value format: "domain:port" or just "domain" (defaults to port 80).
 /// Surrounding quotes from YAML double-quoting are stripped automatically.
-fn parse_host_labels(labels: &serde_json::Value) -> Vec<(String, String)> {
+pub(crate) fn parse_host_labels(labels: &serde_json::Value) -> Vec<(String, String)> {
     let Some(map) = labels.as_object() else {
         return vec![];
     };
@@ -640,4 +640,68 @@ fn spawn_daemon(out: &Output, verbose: bool) -> Result<()> {
         println!("  {}", log_path.display());
     }
     Ok(())
+}
+
+// ─── tests ───────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(pairs: &[(&str, &str)]) -> serde_json::Value {
+        let map: serde_json::Map<String, serde_json::Value> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
+            .collect();
+        serde_json::Value::Object(map)
+    }
+
+    #[test]
+    fn single_host_label() {
+        let l = labels(&[("dip.host", "app.test:80")]);
+        let entries = parse_host_labels(&l);
+        assert_eq!(entries, vec![("app.test".to_string(), "80".to_string())]);
+    }
+
+    #[test]
+    fn named_host_labels() {
+        let l = labels(&[
+            ("dip.host.web", "app.test:80"),
+            ("dip.host.api", "api.test:3000"),
+        ]);
+        let mut entries = parse_host_labels(&l);
+        entries.sort();
+        assert!(entries.contains(&("app.test".to_string(), "80".to_string())));
+        assert!(entries.contains(&("api.test".to_string(), "3000".to_string())));
+    }
+
+    #[test]
+    fn default_port_80_when_omitted() {
+        let l = labels(&[("dip.host", "app.test")]);
+        let entries = parse_host_labels(&l);
+        assert_eq!(entries[0].1, "80");
+    }
+
+    #[test]
+    fn quoted_values_handled() {
+        let l = labels(&[("dip.host", "\"app.test:80\"")]);
+        let entries = parse_host_labels(&l);
+        assert_eq!(entries[0].0, "app.test");
+    }
+
+    #[test]
+    fn non_dip_labels_ignored() {
+        let l = labels(&[
+            ("com.docker.compose.service", "app"),
+            ("dip.host", "app.test:80"),
+        ]);
+        let entries = parse_host_labels(&l);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn no_labels_returns_empty() {
+        let entries = parse_host_labels(&serde_json::Value::Null);
+        assert!(entries.is_empty());
+    }
 }

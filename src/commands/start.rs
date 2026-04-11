@@ -23,6 +23,7 @@ pub fn run(verbose: bool, no_color: bool) -> Result<()> {
     out.success("Containers started");
 
     proxy::apply_sync(&project, verbose, no_color);
+    hooks::run_post_start(&project, verbose, no_color);
 
     Ok(())
 }

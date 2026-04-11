@@ -21,6 +21,8 @@ fn main() {
 
     let result = match cli.command {
         Commands::Init => commands::init::run(nc),
+        Commands::Env => commands::env::run(nc),
+        Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Sysinfo => commands::sysinfo::run(v, nc),
 
         // Lifecycle
@@ -72,6 +74,7 @@ fn main() {
 
         // Database
         Commands::Db(sub) => match sub {
+            DbCommands::List => commands::db::run_list(v, nc),
             DbCommands::Dump {
                 output_path,
                 service,

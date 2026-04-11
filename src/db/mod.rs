@@ -232,3 +232,87 @@ pub fn detect(env: &HashMap<String, String>) -> Result<(Box<dyn DbBackend>, DbCo
          PostgreSQL: set POSTGRES_DB + POSTGRES_PASSWORD"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── detect() ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn detects_mysql() {
+        let env = HashMap::from([
+            ("MYSQL_DATABASE".to_string(), "mydb".to_string()),
+            ("MYSQL_ROOT_PASSWORD".to_string(), "secret".to_string()),
+        ]);
+        let (backend, cfg) = detect(&env).unwrap();
+        assert_eq!(backend.name(), "mysql");
+        assert_eq!(cfg.db_name, "mydb");
+        assert_eq!(cfg.user, "root");
+    }
+
+    #[test]
+    fn detects_postgres_primary_vars() {
+        let env = HashMap::from([
+            ("POSTGRES_DB".to_string(), "pgdb".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "pgpass".to_string()),
+            ("POSTGRES_USER".to_string(), "pguser".to_string()),
+        ]);
+        let (backend, cfg) = detect(&env).unwrap();
+        assert_eq!(backend.name(), "postgres");
+        assert_eq!(cfg.db_name, "pgdb");
+        assert_eq!(cfg.user, "pguser");
+    }
+
+    #[test]
+    fn detects_postgres_pg_aliases() {
+        let env = HashMap::from([
+            ("PGDATABASE".to_string(), "pgdb".to_string()),
+            ("PGPASSWORD".to_string(), "pgpass".to_string()),
+        ]);
+        let (backend, cfg) = detect(&env).unwrap();
+        assert_eq!(backend.name(), "postgres");
+        assert_eq!(cfg.user, "postgres"); // default user
+    }
+
+    #[test]
+    fn mysql_takes_priority_over_postgres() {
+        let env = HashMap::from([
+            ("MYSQL_DATABASE".to_string(), "mydb".to_string()),
+            ("MYSQL_ROOT_PASSWORD".to_string(), "secret".to_string()),
+            ("POSTGRES_DB".to_string(), "pgdb".to_string()),
+            ("POSTGRES_PASSWORD".to_string(), "pgpass".to_string()),
+        ]);
+        let (backend, _) = detect(&env).unwrap();
+        assert_eq!(backend.name(), "mysql");
+    }
+
+    #[test]
+    fn empty_env_returns_error() {
+        let env = HashMap::new();
+        assert!(detect(&env).is_err());
+    }
+
+    // ── parse_container_env() ─────────────────────────────────────────────────
+
+    #[test]
+    fn parses_env_array() {
+        let json = serde_json::json!(["MYSQL_DATABASE=mydb", "MYSQL_ROOT_PASSWORD=secret"]);
+        let map = parse_container_env(&json);
+        assert_eq!(map["MYSQL_DATABASE"], "mydb");
+        assert_eq!(map["MYSQL_ROOT_PASSWORD"], "secret");
+    }
+
+    #[test]
+    fn env_value_with_equals_sign() {
+        let json = serde_json::json!(["JDBC=jdbc:mysql://host/db?user=root"]);
+        let map = parse_container_env(&json);
+        assert_eq!(map["JDBC"], "jdbc:mysql://host/db?user=root");
+    }
+
+    #[test]
+    fn null_env_returns_empty_map() {
+        let map = parse_container_env(&serde_json::Value::Null);
+        assert!(map.is_empty());
+    }
+}

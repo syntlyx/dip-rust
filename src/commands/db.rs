@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use colored::Colorize;
 
 use crate::db;
 use crate::project::ProjectConfig;
@@ -83,6 +84,44 @@ pub fn run_import(
 
     out.info(&format!("Detected backend: {}", backend.name()));
     backend.import(&container_id, &config, input_path, &out)
+}
+
+pub fn run_list(verbose: bool, no_color: bool) -> Result<()> {
+    let out = Output::new(no_color);
+    Runtime::check_daemon()?;
+    let project = ProjectConfig::load()?;
+    let services = db::detect_by_labels(&project, verbose)?;
+
+    out.section("db services", || {
+        if services.is_empty() {
+            println!(
+                "  {}",
+                "No dip.db labels found — checking legacy mode…".dimmed()
+            );
+            let env = project.get_env();
+            match db::detect(&env) {
+                Ok((backend, cfg)) => println!(
+                    "  {:20} {:10} db: {}  user: {}",
+                    "db (legacy)".cyan(),
+                    backend.name().yellow(),
+                    cfg.db_name.dimmed(),
+                    cfg.user.dimmed(),
+                ),
+                Err(_) => println!("  {}", "No database configuration found".yellow()),
+            }
+        } else {
+            for svc in &services {
+                println!(
+                    "  {:20} {:10} db: {}  user: {}",
+                    svc.service_name.cyan(),
+                    svc.backend.name().yellow(),
+                    svc.config.db_name.dimmed(),
+                    svc.config.user.dimmed(),
+                );
+            }
+        }
+    });
+    Ok(())
 }
 
 /// Pick the right DbService from the list, honoring `--service` when there are multiple.

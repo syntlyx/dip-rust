@@ -1,6 +1,8 @@
 pub mod build;
 pub mod cleanup;
+pub mod completions;
 pub mod db;
+pub mod env;
 pub mod health;
 pub mod init;
 pub mod logs;

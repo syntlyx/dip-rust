@@ -26,14 +26,42 @@ pub fn run_pre_start(
     verbose: bool,
     no_color: bool,
 ) -> Result<HashMap<String, String>> {
-    let hook = project.dip_dir.join("hooks").join("pre-start");
+    run_named_hook("pre-start", project, verbose, no_color)
+}
+
+/// Run `.dip/hooks/post-start` if it exists (best-effort, errors are warnings).
+pub fn run_post_start(project: &ProjectConfig, verbose: bool, no_color: bool) {
+    if let Err(e) = run_named_hook("post-start", project, verbose, no_color) {
+        Output::new(no_color).warning(&format!("post-start hook: {e}"));
+    }
+}
+
+/// Run `.dip/hooks/pre-stop` if it exists (best-effort, errors are warnings).
+pub fn run_pre_stop(project: &ProjectConfig, verbose: bool, no_color: bool) {
+    if let Err(e) = run_named_hook("pre-stop", project, verbose, no_color) {
+        Output::new(no_color).warning(&format!("pre-stop hook: {e}"));
+    }
+}
+
+/// Run `.dip/hooks/post-stop` if it exists (best-effort, errors are warnings).
+pub fn run_post_stop(project: &ProjectConfig, verbose: bool, no_color: bool) {
+    if let Err(e) = run_named_hook("post-stop", project, verbose, no_color) {
+        Output::new(no_color).warning(&format!("post-stop hook: {e}"));
+    }
+}
+
+fn run_named_hook(
+    name: &str,
+    project: &ProjectConfig,
+    verbose: bool,
+    no_color: bool,
+) -> Result<HashMap<String, String>> {
+    let hook = project.dip_dir.join("hooks").join(name);
     if !hook.exists() {
         return Ok(HashMap::new());
     }
-
     let out = Output::new(no_color);
-    out.info(&format!("Running pre-start hook: {}", hook.display()));
-
+    out.info(&format!("Running {name} hook..."));
     run_hook(&hook, project, verbose)
 }
 
@@ -76,7 +104,7 @@ fn run_hook(
 ///   KEY=VALUE
 ///   export KEY=VALUE
 ///   export KEY="VALUE"
-fn parse_env_output(output: &str) -> HashMap<String, String> {
+pub(crate) fn parse_env_output(output: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in output.lines() {
         let line = line.trim();
@@ -97,4 +125,44 @@ fn parse_env_output(output: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_key_value() {
+        let out = parse_env_output("FOO=bar\nBAZ=qux\n");
+        assert_eq!(out["FOO"], "bar");
+        assert_eq!(out["BAZ"], "qux");
+    }
+
+    #[test]
+    fn export_prefix_stripped() {
+        let out = parse_env_output("export AWS_ACCESS_KEY_ID=AKIA123\nexport AWS_SECRET=secret\n");
+        assert_eq!(out["AWS_ACCESS_KEY_ID"], "AKIA123");
+        assert_eq!(out["AWS_SECRET"], "secret");
+    }
+
+    #[test]
+    fn quoted_values_stripped() {
+        let out = parse_env_output("export TOKEN=\"abc123\"\nKEY='xyz'\n");
+        assert_eq!(out["TOKEN"], "abc123");
+        assert_eq!(out["KEY"], "xyz");
+    }
+
+    #[test]
+    fn comments_and_blank_lines_ignored() {
+        let out = parse_env_output("# comment\n\nFOO=bar\n");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out["FOO"], "bar");
+    }
+
+    #[test]
+    fn value_with_equals_sign() {
+        // Only the first '=' is the separator
+        let out = parse_env_output("JDBC=jdbc:mysql://host/db?user=root\n");
+        assert_eq!(out["JDBC"], "jdbc:mysql://host/db?user=root");
+    }
 }

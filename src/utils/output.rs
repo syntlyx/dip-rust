@@ -1,6 +1,7 @@
 use colored::{Color, Colorize};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
+use terminal_size::{Width, terminal_size};
 
 pub struct Output;
 
@@ -24,6 +25,26 @@ impl Output {
 
     pub fn error(&self, message: &str) {
         println!("{} {}", "✗".red().bold(), message.red());
+    }
+
+    /// Print a bordered section with a title and body.
+    /// Width adapts to the current terminal width (falls back to 80).
+    ///
+    /// ```text
+    /// ────────────────────────────────────
+    ///   title
+    /// ────────────────────────────────────
+    ///   <body printed by closure>
+    /// ────────────────────────────────────
+    /// ```
+    pub fn section(&self, title: &str, body: impl FnOnce()) {
+        let width = term_width();
+        let sep = "─".repeat(width);
+        println!("{sep}");
+        println!("  {}", title.bold().green());
+        println!("{sep}");
+        body();
+        println!("{sep}");
     }
 
     pub fn spinner(&self, message: &str) -> ProgressBar {
@@ -81,6 +102,13 @@ pub fn format_ports(raw: &str) -> String {
         }
     }
     parts.join("  ")
+}
+
+/// Current terminal width, falling back to 80 if not a tty (e.g. pipes, CI).
+pub fn term_width() -> usize {
+    terminal_size()
+        .map(|(Width(w), _)| w as usize)
+        .unwrap_or(80)
 }
 
 /// Map a service name to a stable terminal color.
