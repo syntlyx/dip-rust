@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pre-start hook — runs before containers start.
+# Stdout is parsed as KEY=VALUE env vars and injected into docker-compose.
+#
+# Example: export AWS credentials
+# aws configure export-credentials --format env

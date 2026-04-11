@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{DbBackend, DbConfig};
+use super::{DbBackend, DbConfig, is_gzipped};
 use crate::utils::output::Output;
 
 pub struct PostgresBackend;
@@ -29,19 +29,34 @@ impl DbBackend for PostgresBackend {
             anyhow::anyhow!("Cannot create output file {}: {e}", output_path.display())
         })?;
 
-        let status = std::process::Command::new("docker")
-            .args([
-                "exec",
-                "-e",
-                &format!("PGPASSWORD={}", config.password),
-                container_id,
-                "pg_dump",
-                "-U",
-                &config.user,
-                &config.db_name,
-            ])
-            .stdout(output_file)
-            .status()?;
+        let status = if is_gzipped(output_path) {
+            std::process::Command::new("docker")
+                .args([
+                    "exec",
+                    "-e",
+                    &format!("PGPASSWORD={}", config.password),
+                    container_id,
+                    "sh",
+                    "-c",
+                    &format!("pg_dump -U {} {} | gzip", config.user, config.db_name),
+                ])
+                .stdout(output_file)
+                .status()?
+        } else {
+            std::process::Command::new("docker")
+                .args([
+                    "exec",
+                    "-e",
+                    &format!("PGPASSWORD={}", config.password),
+                    container_id,
+                    "pg_dump",
+                    "-U",
+                    &config.user,
+                    &config.db_name,
+                ])
+                .stdout(output_file)
+                .status()?
+        };
 
         if status.success() {
             out.success(&format!("Database exported to {}", output_path.display()));
@@ -61,12 +76,19 @@ impl DbBackend for PostgresBackend {
         input_path: &Path,
         out: &Output,
     ) -> Result<()> {
+        let gz = is_gzipped(input_path);
+        let remote = if gz {
+            "/tmp/import.sql.gz"
+        } else {
+            "/tmp/import.sql"
+        };
+
         out.info("Copying dump file to container...");
         let cp_status = std::process::Command::new("docker")
             .args([
                 "cp",
                 input_path.to_str().unwrap(),
-                &format!("{container_id}:/tmp/import.sql"),
+                &format!("{container_id}:{remote}"),
             ])
             .status()?;
         if !cp_status.success() {
@@ -77,24 +99,35 @@ impl DbBackend for PostgresBackend {
             "Importing into PostgreSQL database '{}'...",
             config.db_name
         ));
-        let import_status = std::process::Command::new("docker")
-            .args([
-                "exec",
-                "-e",
-                &format!("PGPASSWORD={}", config.password),
-                container_id,
-                "psql",
-                "-U",
-                &config.user,
-                "-d",
-                &config.db_name,
-                "-f",
-                "/tmp/import.sql",
-            ])
-            .status()?;
+
+        let import_status = if gz {
+            let import_cmd = format!(
+                "gunzip -c {remote} | PGPASSWORD={} psql -U {} -d {}",
+                config.password, config.user, config.db_name
+            );
+            std::process::Command::new("docker")
+                .args(["exec", container_id, "sh", "-c", &import_cmd])
+                .status()?
+        } else {
+            std::process::Command::new("docker")
+                .args([
+                    "exec",
+                    "-e",
+                    &format!("PGPASSWORD={}", config.password),
+                    container_id,
+                    "psql",
+                    "-U",
+                    &config.user,
+                    "-d",
+                    &config.db_name,
+                    "-f",
+                    "/tmp/import.sql",
+                ])
+                .status()?
+        };
 
         let _ = std::process::Command::new("docker")
-            .args(["exec", container_id, "rm", "-f", "/tmp/import.sql"])
+            .args(["exec", container_id, "rm", "-f", remote])
             .status();
 
         if import_status.success() {

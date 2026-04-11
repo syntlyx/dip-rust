@@ -25,7 +25,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize a new dip project in the current directory
-    Init,
+    Init {
+        /// Project template: nestjs, nextjs, node, laravel
+        #[arg(long, short = 't')]
+        template: Option<String>,
+    },
 
     /// Show resolved project environment variables
     Env,

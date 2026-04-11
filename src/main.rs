@@ -8,6 +8,7 @@ mod hooks;
 mod project;
 mod proxy;
 mod runtime;
+mod templates;
 mod utils;
 
 use clap::Parser;
@@ -20,7 +21,7 @@ fn main() {
     let nc = cli.no_color;
 
     let result = match cli.command {
-        Commands::Init => commands::init::run(nc),
+        Commands::Init { template } => commands::init::run(template.as_deref(), nc),
         Commands::Env => commands::env::run(nc),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Sysinfo => commands::sysinfo::run(v, nc),

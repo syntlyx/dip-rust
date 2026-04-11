@@ -1,0 +1,9 @@
+services:
+  app:
+    image: nginx:alpine
+    volumes:
+      - ${PROJECT_ROOT}:/usr/share/nginx/html:ro
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:80"

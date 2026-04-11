@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_ROOT}:/app
+      - /app/node_modules
+      - /app/.next
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:3000"
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    labels:
+      dip.db: postgres
+
+volumes:
+  db_data:

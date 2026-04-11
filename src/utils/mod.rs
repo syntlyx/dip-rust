@@ -1,6 +1,22 @@
 pub mod output;
 
+use std::path::Path;
+
 use anyhow::Result;
+
+/// Ensure a file has executable bits set (`chmod +x`).
+/// No-op if the file is already executable.
+pub fn ensure_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::metadata(path)?;
+    let mode = meta.permissions().mode();
+    if mode & 0o111 == 0 {
+        let mut perms = meta.permissions();
+        perms.set_mode(mode | 0o755);
+        std::fs::set_permissions(path, perms)?;
+    }
+    Ok(())
+}
 
 /// Prompt the user for a yes/no confirmation. Returns `true` for "y" / "yes".
 pub fn confirm(prompt: &str) -> Result<bool> {

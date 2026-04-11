@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 use anyhow::Result;
 
 use crate::project::ProjectConfig;
+use crate::utils::ensure_executable;
 use crate::utils::output::Output;
 
 /// Run `.dip/hooks/pre-start` if it exists.
@@ -74,18 +75,14 @@ fn run_hook(
         eprintln!("Hook: {}", path.display());
     }
 
+    ensure_executable(path)?;
+
     let output = Command::new(path)
         .envs(project.get_env())
         // Let stderr flow to the terminal so the user sees hook output
         .stderr(Stdio::inherit())
         .output()
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to run hook {}: {e}\n(Is it executable? Try: chmod +x {})",
-                path.display(),
-                path.display()
-            )
-        })?;
+        .map_err(|e| anyhow::anyhow!("Failed to run hook {}: {e}", path.display()))?;
 
     if !output.status.success() {
         anyhow::bail!(

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use std::os::unix::fs::PermissionsExt;
 
 use crate::hooks;
 use crate::project::ProjectConfig;
 use crate::runtime::Runtime;
+use crate::utils::ensure_executable;
 use crate::utils::output::Output;
 
 pub fn run(script: &str, args: &[String], verbose: bool, no_color: bool) -> Result<()> {
@@ -40,15 +40,7 @@ pub fn run(script: &str, args: &[String], verbose: bool, no_color: bool) -> Resu
         }
     }
 
-    // Ensure the script is executable
-    let meta = std::fs::metadata(&script_path)?;
-    if meta.permissions().mode() & 0o111 == 0 {
-        anyhow::bail!(
-            "Script '{}' is not executable. Run: chmod +x {}",
-            script,
-            script_path.display()
-        );
-    }
+    ensure_executable(&script_path)?;
 
     if verbose {
         out.info(&format!(

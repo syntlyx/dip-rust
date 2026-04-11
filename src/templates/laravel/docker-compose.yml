@@ -1,0 +1,28 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_ROOT}:/var/www/html
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:80"
+
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    labels:
+      dip.db: mysql
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+volumes:
+  db_data:
+  redis_data:

@@ -187,6 +187,12 @@ fn parse_container_env(env_array: &Value) -> HashMap<String, String> {
     map
 }
 
+// ─── compression helpers ──────────────────────────────────────────────────────
+
+pub fn is_gzipped(path: &Path) -> bool {
+    path.to_str().map(|s| s.ends_with(".gz")).unwrap_or(false)
+}
+
 // ─── legacy env-based detection ──────────────────────────────────────────────
 
 /// Detect which database backend is configured from .env variables.

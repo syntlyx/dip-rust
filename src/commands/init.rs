@@ -4,9 +4,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::templates;
 use crate::utils::output::Output;
 
-pub fn run(no_color: bool) -> Result<()> {
+pub fn run(template: Option<&str>, no_color: bool) -> Result<()> {
     let out = Output::new(no_color);
     let cwd = std::env::current_dir()?;
     let dip_dir = cwd.join(".dip");
@@ -15,7 +16,15 @@ pub fn run(no_color: bool) -> Result<()> {
         anyhow::bail!(".dip/ already exists in this directory — already a dip project");
     }
 
+    let tmpl = match template {
+        Some(name) => templates::find(name)?,
+        None => templates::default(),
+    };
+
     println!("Initializing new dip project in {}", cwd.display());
+    if tmpl.name != "default" {
+        println!("Template: {} — {}", tmpl.name, tmpl.description);
+    }
     println!();
 
     let default_name = cwd
@@ -32,22 +41,38 @@ pub fn run(no_color: bool) -> Result<()> {
     fs::create_dir_all(dip_dir.join("commands/utils"))?;
 
     // ── .env / default.env ────────────────────────────────────────────────────
-    let env_content = env_template(&project_name, &domain);
+    let env_content = {
+        let mut s = format!("PROJECT_NAME={project_name}\nDOMAIN={domain}\n");
+        let extra = tmpl.extra_env.replace("{name}", &project_name);
+        s.push_str(&extra);
+        s
+    };
     write_file(&dip_dir.join("default.env"), &env_content)?;
     write_file(&dip_dir.join(".env"), &env_content)?;
 
     // ── docker-compose.yml ────────────────────────────────────────────────────
-    write_file(&dip_dir.join("docker-compose.yml"), DOCKER_COMPOSE)?;
+    write_file(&dip_dir.join("docker-compose.yml"), tmpl.compose)?;
+
+    // ── Dockerfile ────────────────────────────────────────────────────────────
+    if let Some(dockerfile) = tmpl.dockerfile {
+        let path = cwd.join("Dockerfile");
+        if path.exists() {
+            out.warning("Dockerfile already exists — skipping");
+        } else {
+            write_file(&path, dockerfile)?;
+        }
+    }
 
     // ── hooks ─────────────────────────────────────────────────────────────────
-    write_executable(&dip_dir.join("hooks/pre-start"), PRE_START_HOOK)?;
+    write_executable(&dip_dir.join("hooks/pre-start"), templates::PRE_START)?;
 
     // ── commands ──────────────────────────────────────────────────────────────
-    write_file(&dip_dir.join("commands/utils/color.sh"), COLOR_SH)?;
-    write_executable(
-        &dip_dir.join("commands/hello"),
-        &hello_command(&project_name),
+    write_file(
+        &dip_dir.join("commands/utils/color.sh"),
+        templates::COLOR_SH,
     )?;
+    let hello = templates::HELLO.replace("{name}", &project_name);
+    write_executable(&dip_dir.join("commands/hello"), &hello)?;
 
     // ── .gitignore ────────────────────────────────────────────────────────────
     update_gitignore(&cwd)?;
@@ -56,6 +81,9 @@ pub fn run(no_color: bool) -> Result<()> {
     println!();
     out.success(&format!("Project '{project_name}' initialized"));
     println!();
+    if tmpl.dockerfile.is_some() {
+        println!("  Dockerfile");
+    }
     println!("  .dip/");
     println!("  ├── default.env          ← commit this");
     println!("  ├── .env                 ← gitignored, local overrides");
@@ -69,69 +97,6 @@ pub fn run(no_color: bool) -> Result<()> {
     out.info("Edit .dip/docker-compose.yml, then run: dip start");
 
     Ok(())
-}
-
-// ─── templates ────────────────────────────────────────────────────────────────
-
-fn env_template(project_name: &str, domain: &str) -> String {
-    format!(
-        "PROJECT_NAME={project_name}\n\
-         DOMAIN={domain}\n"
-    )
-}
-
-const DOCKER_COMPOSE: &str = "\
-services:
-  app:
-    image: nginx:alpine
-    volumes:
-      - ${PROJECT_ROOT}:/usr/share/nginx/html:ro
-    env_file:
-      - ${ENV_FILE}
-    labels:
-      dip.host: \"${DOMAIN}:80\"
-";
-
-const PRE_START_HOOK: &str = "\
-#!/usr/bin/env bash
-# Pre-start hook — runs before containers start.
-# Stdout is parsed as KEY=VALUE env vars and injected into docker-compose.
-#
-# Example: export AWS credentials
-# aws configure export-credentials --format env
-";
-
-const COLOR_SH: &str = "\
-# ANSI color helpers — source this in any dip command:
-#   source \"${DIP_DIR}/commands/utils/color.sh\"
-
-RED='\\033[0;31m'
-GREEN='\\033[0;32m'
-YELLOW='\\033[1;33m'
-BLUE='\\033[0;34m'
-CYAN='\\033[0;36m'
-BOLD='\\033[1m'
-NOFORMAT='\\033[0m'
-
-msg() {
-  echo -e \"$*\"
-}
-";
-
-fn hello_command(project_name: &str) -> String {
-    format!(
-        "\
-#!/usr/bin/env bash
-# Description: Example dip command — run with: dip run hello
-
-set -e
-
-source \"${{DIP_DIR}}/commands/utils/color.sh\"
-
-msg \"${{GREEN}}[INFO]${{NOFORMAT}} Hello from {project_name}!\"
-msg \"${{YELLOW}}[INFO]${{NOFORMAT}} Args: $*\"
-"
-    )
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -169,7 +134,7 @@ fn update_gitignore(root: &Path) -> Result<()> {
 
     let existing = fs::read_to_string(&path).unwrap_or_default();
     if existing.lines().any(|l| l.trim() == entry) {
-        return Ok(()); // already there
+        return Ok(());
     }
 
     let mut f = fs::OpenOptions::new()
@@ -177,7 +142,6 @@ fn update_gitignore(root: &Path) -> Result<()> {
         .append(true)
         .open(&path)?;
 
-    // Add a newline separator if file doesn't end with one
     if !existing.is_empty() && !existing.ends_with('\n') {
         writeln!(f)?;
     }
