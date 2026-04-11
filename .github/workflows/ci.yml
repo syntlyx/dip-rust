@@ -15,7 +15,7 @@ jobs:
     name: Check & Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -23,7 +23,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.4
         with:
           path: |
             ~/.cargo/registry
@@ -40,4 +40,3 @@ jobs:
 
       - name: cargo test
         run: cargo test --all
-
