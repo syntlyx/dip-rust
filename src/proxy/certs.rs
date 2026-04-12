@@ -214,68 +214,35 @@ pub fn install_ca() -> Result<bool> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn install_ca() -> Result<bool> {
-    use std::process::{Command, Stdio};
+    use std::process::Command;
+
+    // Directories where CA certs can be placed — first existing one wins.
+    // (dir, filename)
+    let cert_dirs: &[(&str, &str)] = &[
+        ("/usr/local/share/ca-certificates", "dip-ca.crt"), // Debian / Ubuntu / Gentoo
+        ("/etc/pki/ca-trust/source/anchors", "dip-ca.crt"), // RHEL / Fedora / CentOS
+        ("/etc/ca-certificates/trust-source/anchors", "dip-ca.crt"), // Arch
+        ("/etc/ssl/certs", "dip-ca.pem"),                   // Gentoo / Alpine
+    ];
+
+    // Commands to refresh the system trust store — first available one is used.
+    // Each entry is argv: ["cmd", "arg1", ...]
+    let update_cmds: &[&[&str]] = &[
+        &["update-ca-certificates"],
+        &["update-ca-trust"],
+        &["c_rehash", "/etc/ssl/certs"],
+        &["openssl", "rehash", "/etc/ssl/certs"],
+    ];
 
     let cert_path = ca_cert_path();
 
-    fn cmd_exists(cmd: &str) -> bool {
-        Command::new("which")
-            .arg(cmd)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    fn sudo_cp_and_run(src: &std::path::Path, dest: &str, update_cmd: &str) -> Result<bool> {
-        let ok = Command::new("sudo")
-            .args(["cp", src.to_str().unwrap_or(""), dest])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        anyhow::ensure!(ok, "Failed to copy CA cert to {dest}");
-
-        let ok = Command::new("sudo")
-            .args([update_cmd])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        anyhow::ensure!(ok, "{update_cmd} failed");
-        Ok(true)
-    }
-
-    if cmd_exists("update-ca-certificates") {
-        // Debian / Ubuntu / Gentoo (app-misc/ca-certificates)
-        sudo_cp_and_run(
-            &cert_path,
-            "/usr/local/share/ca-certificates/dip-ca.crt",
-            "update-ca-certificates",
-        )
-    } else if cmd_exists("update-ca-trust") {
-        // RHEL / Fedora / CentOS / Rocky / Alma
-        sudo_cp_and_run(
-            &cert_path,
-            "/etc/pki/ca-trust/source/anchors/dip-ca.crt",
-            "update-ca-trust",
-        )
-    } else if cmd_exists("trust") {
-        // Arch Linux (p11-kit)
-        let ok = Command::new("sudo")
-            .args([
-                "trust",
-                "anchor",
-                "--store",
-                cert_path.to_str().unwrap_or(""),
-            ])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        anyhow::ensure!(ok, "trust anchor --store failed");
-        Ok(true)
-    } else {
+    // 1. Find the cert store directory
+    let Some((dir, filename)) = cert_dirs
+        .iter()
+        .find(|(dir, _)| std::path::Path::new(dir).is_dir())
+    else {
         let path = cert_path.display();
-        eprintln!("No supported CA cert tool found. Install manually:");
+        eprintln!("No supported CA cert store found. Install manually:");
         eprintln!();
         eprintln!("  Debian/Ubuntu/Gentoo:");
         eprintln!("    sudo cp {path} /usr/local/share/ca-certificates/dip-ca.crt");
@@ -285,10 +252,39 @@ pub fn install_ca() -> Result<bool> {
         eprintln!("    sudo cp {path} /etc/pki/ca-trust/source/anchors/dip-ca.crt");
         eprintln!("    sudo update-ca-trust");
         eprintln!();
-        eprintln!("  Arch Linux:");
-        eprintln!("    sudo trust anchor --store {path}");
-        Ok(false)
+        eprintln!("  Gentoo/Alpine:");
+        eprintln!("    sudo cp {path} /etc/ssl/certs/dip-ca.pem");
+        eprintln!("    sudo c_rehash /etc/ssl/certs");
+        return Ok(false);
+    };
+
+    // 2. Copy the cert
+    let dest = format!("{dir}/{filename}");
+    let ok = Command::new("sudo")
+        .args(["cp", cert_path.to_str().unwrap_or(""), &dest])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    anyhow::ensure!(ok, "Failed to copy CA cert to {dest}");
+
+    // 3. Run the first available update command
+    let updated = update_cmds.iter().find_map(|argv| {
+        Command::new("sudo")
+            .args(*argv)
+            .status()
+            .ok()
+            .filter(|s| s.success())
+            .map(|_| argv[0])
+    });
+
+    match updated {
+        Some(cmd) => eprintln!("CA cert installed via {cmd}"),
+        None => eprintln!(
+            "Warning: cert copied to {dest} but no update command succeeded — run one manually"
+        ),
     }
+
+    Ok(true)
 }
 
 // ─── internals ───────────────────────────────────────────────────────────────
