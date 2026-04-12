@@ -22,11 +22,10 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
-const UPSTREAM: &str = "8.8.8.8:53";
 const TTL: u32 = 60;
 
 /// Starts the DNS server. Blocks until an error occurs.
-pub async fn run(port: u16, tlds: Vec<String>) -> anyhow::Result<()> {
+pub async fn run(port: u16, tlds: Vec<String>, upstream: String) -> anyhow::Result<()> {
     let sock = Arc::new(
         UdpSocket::bind(("127.0.0.1", port))
             .await
@@ -47,12 +46,13 @@ pub async fn run(port: u16, tlds: Vec<String>) -> anyhow::Result<()> {
         let data = buf[..len].to_vec();
         let sock = sock.clone();
         let tlds = tlds.clone();
+        let upstream = upstream.clone();
 
         tokio::spawn(async move {
             let resp = if matches_tld(&data, &tlds) {
                 make_response(&data)
             } else {
-                forward(&data).await.ok()
+                forward(&data, &upstream).await.ok()
             };
 
             if let Some(r) = resp {
@@ -120,10 +120,10 @@ fn make_response(query: &[u8]) -> Option<Vec<u8>> {
 // ─── forwarding ───────────────────────────────────────────────────────────────
 
 /// Forward a query to the upstream resolver and return the raw response.
-async fn forward(data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let upstream: SocketAddr = UPSTREAM.parse()?;
+async fn forward(data: &[u8], upstream: &str) -> anyhow::Result<Vec<u8>> {
+    let upstream_addr: SocketAddr = upstream.parse()?;
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
-    sock.send_to(data, upstream).await?;
+    sock.send_to(data, upstream_addr).await?;
 
     let mut buf = vec![0u8; 512];
     let (len, _) = tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await??;

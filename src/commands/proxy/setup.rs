@@ -58,17 +58,50 @@ pub fn run_init(no_color: bool) -> Result<()> {
         out.success(&format!("Config: {}", config::config_path().display()));
     }
 
-    // 5. Optionally configure DNS
+    // 5. Interactive DNS wizard
     println!();
-    if prompt_yes(
-        "Set up DNS for *.test automatically? (skip if you use Pi-hole or handle DNS yourself) [y/N]",
-    ) {
+    let tld = prompt_input("TLD for local domains", "test");
+    if prompt_yes(&format!(
+        "Set up DNS for *.{tld} automatically? (skip if you use Pi-hole or handle DNS yourself) [y/N]"
+    )) {
+        let system_dns = read_system_dns();
+        let default_port: u16 = if cfg!(target_os = "linux") { 53 } else { 5354 };
+
+        let port_str = prompt_input("DNS port", &default_port.to_string());
+        let port: u16 = port_str.trim().parse().unwrap_or(default_port);
+        let dns_default = system_dns.join(" ");
+        let dns_input = prompt_input("Upstream DNS servers (space-separated)", &dns_default);
+        let upstream_dns: Vec<String> = dns_input
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut cfg = config::load().unwrap_or_default();
+        cfg.tlds = vec![tld];
+        cfg.dns_port = port;
+        if !upstream_dns.is_empty() {
+            cfg.upstream_dns = upstream_dns;
+        }
+        config::save(&cfg)?;
+
+        // On Linux: if port < 1024, grant cap_net_bind_service so dip can bind it without root
+        #[cfg(target_os = "linux")]
+        if port < 1024 {
+            setup_net_bind_cap(&out);
+        }
+
         out.info("Setting up DNS...");
-        if let Err(e) = dns::setup_once(&existing_cfg.tlds, existing_cfg.dns_port, &out) {
+        if let Err(e) = dns::setup_once(&cfg.tlds, cfg.dns_port, &out) {
             out.warning(&format!("DNS setup failed: {e}"));
         }
     } else {
-        out.info("Skipping DNS setup — make sure *.test resolves to 127.0.0.1");
+        // Still save the chosen TLD even if DNS setup is skipped
+        let mut cfg = config::load().unwrap_or_default();
+        cfg.tlds = vec![tld.clone()];
+        config::save(&cfg)?;
+        out.info(&format!(
+            "Skipping DNS setup — make sure *.{tld} resolves to 127.0.0.1"
+        ));
     }
 
     println!();
@@ -132,6 +165,11 @@ pub fn run_config(tld: Option<&str>, dns_port: Option<u16>, no_color: bool) -> R
                 .join(", ")
                 .cyan()
         );
+        println!(
+            "  {:18} {}",
+            "Upstream DNS:".dimmed(),
+            cfg.upstream_dns.join(", ").cyan()
+        );
     });
 
     Ok(())
@@ -146,4 +184,84 @@ fn prompt_yes(question: &str) -> bool {
     let mut line = String::new();
     io::stdin().lock().read_line(&mut line).ok();
     matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+fn prompt_input(question: &str, default: &str) -> String {
+    use std::io::{self, BufRead, Write};
+    print!("  {question} [{default}]: ");
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    io::stdin().lock().read_line(&mut line).ok();
+    let trimmed = line.trim().to_string();
+    if trimmed.is_empty() {
+        default.to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Read real upstream DNS servers from the system.
+/// On Linux with systemd-resolved, reads from /run/systemd/resolve/resolv.conf
+/// which contains actual upstreams (not the 127.0.0.53 stub).
+/// Falls back to parsing /etc/resolv.conf and filtering out loopback addresses.
+fn read_system_dns() -> Vec<String> {
+    let candidates = [
+        "/run/systemd/resolve/resolv.conf", // systemd-resolved: real upstreams
+        "/etc/resolv.conf",
+    ];
+
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let servers: Vec<String> = content
+                .lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    let addr = line.strip_prefix("nameserver")?.trim();
+                    // Filter out loopback — those are stubs, not real upstreams
+                    if addr.starts_with("127.") || addr == "::1" {
+                        return None;
+                    }
+                    Some(addr.to_string())
+                })
+                .take(2)
+                .collect();
+
+            if !servers.is_empty() {
+                return servers;
+            }
+        }
+    }
+
+    vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()]
+}
+
+/// Grant cap_net_bind_service to the current dip binary so it can bind
+/// privileged ports (< 1024, e.g. port 53) without running as root.
+/// Note: this capability is cleared when the binary is replaced (e.g. after
+/// `cargo install` update) — re-run `dip proxy init` to restore it.
+#[cfg(target_os = "linux")]
+fn setup_net_bind_cap(out: &Output) {
+    let Ok(exe) = std::env::current_exe() else {
+        out.warning("Could not determine dip binary path — skip setcap");
+        return;
+    };
+    let exe_str = exe.to_string_lossy();
+    out.info(&format!(
+        "Granting cap_net_bind_service to {exe_str} (one-time sudo)..."
+    ));
+    let ok = std::process::Command::new("sudo")
+        .args(["setcap", "cap_net_bind_service+ep", &*exe_str])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        out.success("dip can now bind port 53 without root");
+    } else {
+        out.warning(&format!(
+            "Could not set capability — run manually:\n  \
+             sudo setcap cap_net_bind_service+ep {exe_str}\n  \
+             Or use DNS port 5354 and re-run `dip proxy init`\n  \
+             Note: re-run `dip proxy init` after updating dip to restore this."
+        ));
+    }
 }

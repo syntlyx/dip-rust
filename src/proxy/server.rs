@@ -157,8 +157,13 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
     let dns_task = {
         let dns_port = config.dns_port;
         let tlds = config.tlds.clone();
+        let upstream_dns = config
+            .upstream_dns
+            .first()
+            .map(|s| format!("{s}:53"))
+            .unwrap_or_else(|| "8.8.8.8:53".to_string());
         tokio::spawn(async move {
-            if let Err(e) = crate::dns::server::run(dns_port, tlds).await {
+            if let Err(e) = crate::dns::server::run(dns_port, tlds, upstream_dns).await {
                 eprintln!("dip-dns: {e}");
             }
         })

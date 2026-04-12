@@ -19,6 +19,9 @@ pub struct ProxyConfig {
     /// TLDs resolved by the built-in DNS server → 127.0.0.1
     #[serde(default = "default_tlds")]
     pub tlds: Vec<String>,
+    /// Upstream DNS servers for forwarding non-local queries
+    #[serde(default = "default_upstream_dns")]
+    pub upstream_dns: Vec<String>,
     /// Routing rules — exact matches always beat wildcards
     #[serde(default)]
     pub routes: Vec<Route>,
@@ -31,6 +34,7 @@ impl Default for ProxyConfig {
             https_port: 443,
             dns_port: 5354,
             tlds: default_tlds(),
+            upstream_dns: default_upstream_dns(),
             routes: vec![],
         }
     }
@@ -47,6 +51,9 @@ fn default_dns_port() -> u16 {
 }
 fn default_tlds() -> Vec<String> {
     vec!["test".to_string()]
+}
+fn default_upstream_dns() -> Vec<String> {
+    vec!["1.1.1.1".to_string(), "8.8.8.8".to_string()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

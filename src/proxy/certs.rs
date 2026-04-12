@@ -214,12 +214,81 @@ pub fn install_ca() -> Result<bool> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn install_ca() -> Result<bool> {
-    // Linux: print instructions; automated install varies too much by distro
-    eprintln!(
-        "Install the CA manually:\n  sudo cp {} /usr/local/share/ca-certificates/dip-ca.crt\n  sudo update-ca-certificates",
-        ca_cert_path().display()
-    );
-    Ok(false)
+    use std::process::{Command, Stdio};
+
+    let cert_path = ca_cert_path();
+
+    fn cmd_exists(cmd: &str) -> bool {
+        Command::new("which")
+            .arg(cmd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn sudo_cp_and_run(src: &std::path::Path, dest: &str, update_cmd: &str) -> Result<bool> {
+        let ok = Command::new("sudo")
+            .args(["cp", src.to_str().unwrap_or(""), dest])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        anyhow::ensure!(ok, "Failed to copy CA cert to {dest}");
+
+        let ok = Command::new("sudo")
+            .args([update_cmd])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        anyhow::ensure!(ok, "{update_cmd} failed");
+        Ok(true)
+    }
+
+    if cmd_exists("update-ca-certificates") {
+        // Debian / Ubuntu / Gentoo (app-misc/ca-certificates)
+        sudo_cp_and_run(
+            &cert_path,
+            "/usr/local/share/ca-certificates/dip-ca.crt",
+            "update-ca-certificates",
+        )
+    } else if cmd_exists("update-ca-trust") {
+        // RHEL / Fedora / CentOS / Rocky / Alma
+        sudo_cp_and_run(
+            &cert_path,
+            "/etc/pki/ca-trust/source/anchors/dip-ca.crt",
+            "update-ca-trust",
+        )
+    } else if cmd_exists("trust") {
+        // Arch Linux (p11-kit)
+        let ok = Command::new("sudo")
+            .args([
+                "trust",
+                "anchor",
+                "--store",
+                cert_path.to_str().unwrap_or(""),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        anyhow::ensure!(ok, "trust anchor --store failed");
+        Ok(true)
+    } else {
+        let path = cert_path.display();
+        eprintln!("No supported CA cert tool found. Install manually:");
+        eprintln!();
+        eprintln!("  Debian/Ubuntu/Gentoo:");
+        eprintln!("    sudo cp {path} /usr/local/share/ca-certificates/dip-ca.crt");
+        eprintln!("    sudo update-ca-certificates");
+        eprintln!();
+        eprintln!("  RHEL/Fedora/CentOS:");
+        eprintln!("    sudo cp {path} /etc/pki/ca-trust/source/anchors/dip-ca.crt");
+        eprintln!("    sudo update-ca-trust");
+        eprintln!();
+        eprintln!("  Arch Linux:");
+        eprintln!("    sudo trust anchor --store {path}");
+        Ok(false)
+    }
 }
 
 // ─── internals ───────────────────────────────────────────────────────────────
