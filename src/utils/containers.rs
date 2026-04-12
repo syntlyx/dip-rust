@@ -12,7 +12,7 @@ use crate::runtime::Runtime;
 ///
 /// All non-essential fields are `Option` so both `status` and `health` commands
 /// can deserialise the same JSON without needing separate structs.
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 pub struct ContainerRow {
     #[serde(rename = "Service")]
     pub service: String,

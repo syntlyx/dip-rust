@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Description: Open Rails console inside the app container
+
+dip exec app "bundle exec rails console"

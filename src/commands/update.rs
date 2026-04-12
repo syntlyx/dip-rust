@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::config;
 use crate::utils::output::Output;
 
-pub fn run(no_color: bool) -> Result<()> {
+pub fn run(force: bool, no_color: bool) -> Result<()> {
     let out = Output::new(no_color);
 
     // Detect current platform → release asset name
@@ -31,7 +31,7 @@ pub fn run(no_color: bool) -> Result<()> {
         })?
         .trim_start_matches('v');
 
-    if latest_version == current_version {
+    if latest_version == current_version && !force {
         out.success(&format!("Already up to date (v{current_version})"));
         return Ok(());
     }

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Description: Run TypeORM CLI directly (migration:generate, migration:revert, schema:drop, …)
+# Usage: dip run typeorm -- migration:generate src/migrations/MyMigration -d src/data-source.ts
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[typeorm] $*${NOFORMAT}"
+dip exec app "node_modules/.bin/ts-node -r tsconfig-paths/register \
+  node_modules/typeorm/cli.js $*"

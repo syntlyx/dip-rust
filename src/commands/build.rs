@@ -1,9 +1,11 @@
 use anyhow::Result;
 
 use crate::commands::ctx::Ctx;
+use crate::utils::notify;
 
 pub fn run(service: Option<String>, verbose: bool, no_color: bool) -> Result<()> {
     let ctx = Ctx::load(verbose, no_color)?;
+    let project = ctx.rt.project.project_name.clone();
 
     let msg = match &service {
         Some(s) => format!("Building service '{s}'..."),
@@ -14,8 +16,10 @@ pub fn run(service: Option<String>, verbose: bool, no_color: bool) -> Result<()>
     if let Some(ref s) = service {
         args.push(s.as_str());
     }
-    ctx.rt.compose_run(&args, &msg)?;
-    ctx.out.success("Build complete");
 
-    Ok(())
+    let result = ctx.rt.compose_run(&args, &msg);
+    if result.is_ok() {
+        ctx.out.success("Build complete");
+    }
+    notify::notify_result(result, &project, "build")
 }

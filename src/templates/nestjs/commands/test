@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Description: Run tests (unit by default; --e2e for end-to-end, --cov for coverage)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--e2e)
+  msg "${YELLOW}[test] e2e${NOFORMAT}"
+  dip exec app "pnpm run test:e2e"
+  ;;
+--cov)
+  msg "${YELLOW}[test] coverage${NOFORMAT}"
+  dip exec app "pnpm run test:cov"
+  ;;
+*)
+  msg "${YELLOW}[test] unit${NOFORMAT}"
+  dip exec app "pnpm run test $*"
+  ;;
+esac

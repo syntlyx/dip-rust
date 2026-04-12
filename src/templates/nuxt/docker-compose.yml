@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_ROOT}:/app
+      - /app/node_modules
+      - /app/.nuxt
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    labels:
+      dip.db: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:alpine
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  db_data:
+  valkey_data:

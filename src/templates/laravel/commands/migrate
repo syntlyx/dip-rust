@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Description: Run database migrations (--fresh to wipe and re-run, --rollback to undo last)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--fresh)
+  msg "${YELLOW}[migrate] fresh migration (wiping DB)...${NOFORMAT}"
+  dip exec app "php artisan migrate:fresh --force --seed"
+  ;;
+--rollback)
+  msg "${YELLOW}[migrate] rolling back last migration...${NOFORMAT}"
+  dip exec app "php artisan migrate:rollback"
+  ;;
+*)
+  msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
+  dip exec app "php artisan migrate --force $*"
+  ;;
+esac
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

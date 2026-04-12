@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run cargo inside the app container (cargo add, cargo test, …)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[cargo] $*${NOFORMAT}"
+dip exec app "cargo $*"

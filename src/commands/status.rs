@@ -5,10 +5,19 @@ use crate::commands::ctx::Ctx;
 use crate::utils::containers::{fetch_containers, state_icon};
 use crate::utils::output::{format_ports, service_color};
 
-pub fn run(verbose: bool, no_color: bool) -> Result<()> {
+pub fn run(format: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
     let ctx = Ctx::load(verbose, no_color)?;
     let project_name = ctx.rt.project.project_name.clone();
     let containers = fetch_containers(&ctx.rt, verbose)?;
+
+    if format == Some("json") {
+        let json = serde_json::json!({
+            "project": project_name,
+            "containers": containers,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+        return Ok(());
+    }
 
     let col_w = containers
         .iter()

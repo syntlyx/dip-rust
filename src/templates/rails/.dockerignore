@@ -1,0 +1,9 @@
+vendor/bundle
+node_modules
+tmp/cache
+tmp/pids
+log
+.git
+.gitignore
+*.env
+*.md

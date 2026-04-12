@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Description: Run Go tests (pass ./... for all packages)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+PACKAGES="${1:-./...}"
+msg "${YELLOW}[test] $PACKAGES${NOFORMAT}"
+dip exec app "go test -v $PACKAGES"

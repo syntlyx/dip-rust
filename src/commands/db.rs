@@ -18,31 +18,32 @@ pub fn run_dump(
     Runtime::check_daemon()?;
 
     let project = ProjectConfig::load()?;
+    let project_name = project.project_name.clone();
 
     // Try label-based detection first
     let labeled = db::detect_by_labels(&project, verbose)?;
 
-    if !labeled.is_empty() {
+    let result = if !labeled.is_empty() {
         let svc = resolve_service(labeled, service, "dump")?;
         out.info(&format!(
             "Detected backend: {} (service: {})",
             svc.backend.name(),
             svc.service_name
         ));
-        return svc
-            .backend
-            .dump(&svc.container_id, &svc.config, output_path, &out);
-    }
+        svc.backend
+            .dump(&svc.container_id, &svc.config, output_path, &out)
+    } else {
+        // Fallback: legacy mode — service named "db", creds from .env
+        out.info("No dip.db labels found — using legacy mode (service: db)");
+        let env = project.get_env();
+        let (backend, config) = db::detect(&env)?;
+        let rt = Runtime::new(project, verbose, no_color);
+        let container_id = rt.get_container_id("db")?;
+        out.info(&format!("Detected backend: {}", backend.name()));
+        backend.dump(&container_id, &config, output_path, &out)
+    };
 
-    // Fallback: legacy mode — service named "db", creds from .env
-    out.info("No dip.db labels found — using legacy mode (service: db)");
-    let env = project.get_env();
-    let (backend, config) = db::detect(&env)?;
-    let rt = Runtime::new(project, verbose, no_color);
-    let container_id = rt.get_container_id("db")?;
-
-    out.info(&format!("Detected backend: {}", backend.name()));
-    backend.dump(&container_id, &config, output_path, &out)
+    crate::utils::notify::notify_result(result, &project_name, "db dump")
 }
 
 pub fn run_import(
@@ -59,38 +60,73 @@ pub fn run_import(
     }
 
     let project = ProjectConfig::load()?;
+    let project_name = project.project_name.clone();
 
     // Try label-based detection first
     let labeled = db::detect_by_labels(&project, verbose)?;
 
-    if !labeled.is_empty() {
+    let result = if !labeled.is_empty() {
         let svc = resolve_service(labeled, service, "import")?;
         out.info(&format!(
             "Detected backend: {} (service: {})",
             svc.backend.name(),
             svc.service_name
         ));
-        return svc
-            .backend
-            .import(&svc.container_id, &svc.config, input_path, &out);
-    }
+        svc.backend
+            .import(&svc.container_id, &svc.config, input_path, &out)
+    } else {
+        // Fallback: legacy mode — service named "db", creds from .env
+        out.info("No dip.db labels found — using legacy mode (service: db)");
+        let env = project.get_env();
+        let (backend, config) = db::detect(&env)?;
+        let rt = Runtime::new(project, verbose, no_color);
+        let container_id = rt.get_container_id("db")?;
+        out.info(&format!("Detected backend: {}", backend.name()));
+        backend.import(&container_id, &config, input_path, &out)
+    };
 
-    // Fallback: legacy mode — service named "db", creds from .env
-    out.info("No dip.db labels found — using legacy mode (service: db)");
-    let env = project.get_env();
-    let (backend, config) = db::detect(&env)?;
-    let rt = Runtime::new(project, verbose, no_color);
-    let container_id = rt.get_container_id("db")?;
-
-    out.info(&format!("Detected backend: {}", backend.name()));
-    backend.import(&container_id, &config, input_path, &out)
+    crate::utils::notify::notify_result(result, &project_name, "db import")
 }
 
-pub fn run_list(verbose: bool, no_color: bool) -> Result<()> {
+pub fn run_list(format: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
     let out = Output::new(no_color);
     Runtime::check_daemon()?;
     let project = ProjectConfig::load()?;
     let services = db::detect_by_labels(&project, verbose)?;
+
+    if format == Some("json") {
+        let env = project.get_env();
+
+        // Collect labeled services; fall back to legacy detection if none found.
+        let rows: Vec<serde_json::Value> = if services.is_empty() {
+            match db::detect(&env) {
+                Ok((backend, cfg)) => vec![serde_json::json!({
+                    "service": "db",
+                    "backend": backend.name(),
+                    "database": cfg.db_name,
+                    "user": cfg.user,
+                    "legacy": true,
+                })],
+                Err(_) => vec![],
+            }
+        } else {
+            services
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "service": s.service_name,
+                        "backend": s.backend.name(),
+                        "database": s.config.db_name,
+                        "user": s.config.user,
+                        "legacy": false,
+                    })
+                })
+                .collect()
+        };
+
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
 
     out.section("db services", || {
         if services.is_empty() {
@@ -122,6 +158,20 @@ pub fn run_list(verbose: bool, no_color: bool) -> Result<()> {
         }
     });
     Ok(())
+}
+
+pub fn run_migrate(
+    from: &str,
+    to: &str,
+    tables: Option<&str>,
+    verbose: bool,
+    no_color: bool,
+) -> Result<()> {
+    Runtime::check_daemon()?;
+    let project = ProjectConfig::load()?;
+    let project_name = project.project_name.clone();
+    let result = db::migrate::run_migrate(&project, from, to, tables, verbose, no_color);
+    crate::utils::notify::notify_result(result, &project_name, &format!("migrate {from}→{to}"))
 }
 
 /// Pick the right DbService from the list, honoring `--service` when there are multiple.

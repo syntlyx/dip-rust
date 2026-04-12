@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Description: Clear all Drupal caches
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[cache] clearing...${NOFORMAT}"
+dip exec app "drush cache:rebuild"
+msg "${GREEN}[cache] cleared${NOFORMAT}"

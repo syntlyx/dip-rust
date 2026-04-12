@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+if [ -z "${ENV_FILE}" ] || [ ! -f "${ENV_FILE}" ]; then
+  msg "${RED}[ERROR] ENV_FILE not set or file not found: ${ENV_FILE}${NOFORMAT}"
+  exit 1
+fi
+
+msg "${GREEN}[OK] env file: ${ENV_FILE}${NOFORMAT}"

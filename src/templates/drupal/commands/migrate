@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Description: Run Drupal database updates and config import
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[migrate] running database updates...${NOFORMAT}"
+dip exec app "drush updatedb --yes"
+
+msg "${YELLOW}[migrate] importing config...${NOFORMAT}"
+dip exec app "drush config:import --yes"
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

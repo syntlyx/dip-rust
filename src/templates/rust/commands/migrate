@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Description: Run sqlx migrations (--add <name> to create new, --revert to undo last)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--add)
+  msg "${YELLOW}[migrate] creating migration: ${2}${NOFORMAT}"
+  dip exec app "sqlx migrate add ${2:-migration}"
+  ;;
+--revert)
+  msg "${YELLOW}[migrate] reverting last migration...${NOFORMAT}"
+  dip exec app "sqlx migrate revert"
+  ;;
+*)
+  msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
+  dip exec app "sqlx migrate run"
+  ;;
+esac
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run Nuxt CLI inside the container (nuxi add, nuxi analyze, …)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[nuxi] $*${NOFORMAT}"
+dip exec app "pnpm dlx nuxi $*"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run Bundler inside the app container
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[bundle] $*${NOFORMAT}"
+dip exec app "bundle $*"

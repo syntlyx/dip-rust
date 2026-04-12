@@ -21,21 +21,31 @@ pub fn run(service: Option<&str>, no_color: bool) -> Result<()> {
         // Find a matching route in the proxy config
         url_for_service(svc)?
     } else {
-        // No arg — use DOMAIN from .env or list all routes
-        let routes = proxy_config::load().map(|c| c.routes).unwrap_or_default();
+        // No arg — filter proxy routes to those belonging to this project,
+        // then auto-open if there's exactly one, or let the user pick.
+        let project_domain = env.get("DOMAIN").cloned().unwrap_or_default();
+        let all_routes = proxy_config::load().map(|c| c.routes).unwrap_or_default();
+
+        // Keep only routes whose domain matches or is a subdomain of DOMAIN.
+        // e.g. DOMAIN=laravel.test keeps "laravel.test" and "api.laravel.test"
+        let routes: Vec<_> = all_routes
+            .into_iter()
+            .filter(|r| {
+                r.domain == project_domain || r.domain.ends_with(&format!(".{project_domain}"))
+            })
+            .collect();
 
         match routes.len() {
             0 => {
                 // Fall back to DOMAIN env var
-                let domain = env
-                    .get("DOMAIN")
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("DOMAIN not set — run inside a dip project"))?;
-                format!("https://{domain}")
+                if project_domain.is_empty() {
+                    anyhow::bail!("DOMAIN not set — run inside a dip project");
+                }
+                format!("https://{project_domain}")
             }
             1 => format!("https://{}", routes[0].domain),
             _ => {
-                // Multiple routes — let the user pick
+                // Multiple routes for this project — let the user pick
                 return pick_and_open(&routes, &out);
             }
         }

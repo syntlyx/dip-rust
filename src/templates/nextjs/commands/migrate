@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Description: Apply Prisma migrations (--dev to create a new migration, --reset to reset DB)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--dev)
+  MIGRATION_NAME="${2:-migration}"
+  msg "${YELLOW}[migrate] creating migration: ${MIGRATION_NAME}${NOFORMAT}"
+  dip exec app "pnpm dlx prisma migrate dev --name ${MIGRATION_NAME}"
+  ;;
+--reset)
+  msg "${YELLOW}[migrate] resetting database...${NOFORMAT}"
+  dip exec app "pnpm dlx prisma migrate reset --force"
+  ;;
+*)
+  msg "${YELLOW}[migrate] deploying pending migrations...${NOFORMAT}"
+  dip exec app "pnpm dlx prisma migrate deploy"
+  ;;
+esac
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

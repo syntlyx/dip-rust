@@ -26,7 +26,7 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a new dip project in the current directory
     Init {
-        /// Project template: nestjs, nextjs, node, laravel
+        /// Project template: nestjs, nextjs, node, laravel (shared base is always applied)
         #[arg(long, short = 't')]
         template: Option<String>,
     },
@@ -85,7 +85,18 @@ pub enum Commands {
 
     // ── Container info ─────────────────────────────────────────────────────
     /// Show status of project containers
-    Status,
+    Status {
+        /// Output format: "json" for machine-readable output
+        #[arg(long, value_name = "FORMAT")]
+        format: Option<String>,
+    },
+    /// Alias for `status`
+    #[command(hide = true)]
+    Ps {
+        /// Output format: "json" for machine-readable output
+        #[arg(long, value_name = "FORMAT")]
+        format: Option<String>,
+    },
     /// Stream container logs
     Logs {
         /// Specific service to tail (tails all if omitted)
@@ -128,10 +139,10 @@ pub enum Commands {
     },
 
     // ── Custom scripts ─────────────────────────────────────────────────────
-    /// Run a script from .dip/commands/
+    /// Run a script from .dip/commands/ (no args = list all scripts)
     Run {
         /// Script name (file in .dip/commands/)
-        script: String,
+        script: Option<String>,
         /// Arguments passed to the script
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
@@ -147,17 +158,44 @@ pub enum Commands {
     #[command(subcommand)]
     Db(DbCommands),
 
+    // ── Tunnel ─────────────────────────────────────────────────────────────
+    /// Share a local port publicly via a reverse SSH tunnel (no extra tools needed)
+    Share {
+        /// Local port to expose (auto-detected from dip.host labels if omitted)
+        #[arg(long, short)]
+        port: Option<u16>,
+
+        /// Compose service whose dip.host port to use (ignored when --port is set)
+        #[arg(long, short)]
+        service: Option<String>,
+    },
+
     // ── System ─────────────────────────────────────────────────────────────
-    /// Remove all unused Docker system resources (with confirmation)
-    Prune,
+    /// Remove unused Docker resources system-wide (with confirmation)
+    Prune {
+        /// Also remove unused volumes
+        #[arg(long)]
+        volumes: bool,
+        /// Remove all unused images, not just dangling ones
+        #[arg(long, short = 'a')]
+        all: bool,
+    },
     /// Update dip to the latest version
-    Update,
+    Update {
+        /// Re-download and reinstall even if already on the latest version
+        #[arg(long, short)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum DbCommands {
     /// List detected database services
-    List,
+    List {
+        /// Output format: "json" for machine-readable output
+        #[arg(long, value_name = "FORMAT")]
+        format: Option<String>,
+    },
     /// Export the project database to a dump file
     Dump {
         /// Output file path
@@ -173,6 +211,18 @@ pub enum DbCommands {
         /// Service name when multiple DB services are defined (e.g. --service mysql)
         #[arg(short, long)]
         service: Option<String>,
+    },
+    /// Migrate database between MySQL ↔ PostgreSQL (streams rows, no OOM on large DBs)
+    Migrate {
+        /// Source service name (run `dip db list` to see available services)
+        #[arg(long)]
+        from: String,
+        /// Target service name
+        #[arg(long)]
+        to: String,
+        /// Comma-separated list of tables to migrate (all tables if omitted)
+        #[arg(long)]
+        tables: Option<String>,
     },
 }
 

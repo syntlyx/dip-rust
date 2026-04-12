@@ -1,5 +1,6 @@
 pub mod containers;
 pub mod env;
+pub mod notify;
 pub mod output;
 
 use std::path::Path;

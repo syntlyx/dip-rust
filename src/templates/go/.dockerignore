@@ -1,0 +1,6 @@
+tmp
+vendor
+.git
+.gitignore
+*.env
+*.md

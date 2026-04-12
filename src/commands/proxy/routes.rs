@@ -113,13 +113,30 @@ pub fn unsync_from_project(project: &ProjectConfig, no_color: bool) -> Result<()
     let before = cfg.routes.len();
     cfg.routes.retain(|r| !domains.contains(r.domain.as_str()));
 
-    if cfg.routes.len() < before {
-        config::save(&cfg)?;
-        let out = Output::new(no_color);
-        for d in &domains {
-            out.info(&format!("  proxy: removed {}", d.as_str().dimmed()));
+    if cfg.routes.len() == before {
+        return Ok(());
+    }
+
+    config::save(&cfg)?;
+
+    let out = Output::new(no_color);
+    for d in &domains {
+        out.info(&format!("  proxy: removed {}", d.as_str().dimmed()));
+    }
+
+    // Regenerate cert without the removed domains.
+    // If the remaining routes no longer need those SANs, the cert shrinks.
+    let remaining: Vec<String> = cfg.routes.iter().map(|r| r.domain.clone()).collect();
+    let cert_changed = certs::ensure_server_cert(&remaining).unwrap_or(false);
+
+    match (daemon_pid(), cert_changed) {
+        (Some(_), false) => sighup_daemon(),
+        (Some(_), true) => {
+            out.info("TLS cert updated — restarting proxy...");
+            super::daemon::run_stop(no_color)?;
+            spawn_daemon(&out, false)?;
         }
-        sighup_daemon();
+        (None, _) => {}
     }
 
     Ok(())
@@ -312,7 +329,7 @@ fn discover_routes(project: &ProjectConfig) -> Result<Vec<Route>> {
 ///   dip.host.api: "api.example.test:3000"
 ///
 /// Value format: "domain:port" or "domain" (defaults to port 80).
-pub(crate) fn parse_host_labels(labels: &serde_json::Value) -> Vec<(String, String)> {
+pub fn parse_host_labels(labels: &serde_json::Value) -> Vec<(String, String)> {
     let Some(map) = labels.as_object() else {
         return vec![];
     };

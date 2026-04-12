@@ -1,3 +1,4 @@
+pub mod migrate;
 pub mod mysql;
 pub mod postgres;
 

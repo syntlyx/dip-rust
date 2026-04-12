@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run Django management commands inside the container
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[manage] $*${NOFORMAT}"
+dip exec app "python manage.py $*"

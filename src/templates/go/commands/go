@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run go commands inside the container (go get, go test, go build, …)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[go] $*${NOFORMAT}"
+dip exec app "go $*"

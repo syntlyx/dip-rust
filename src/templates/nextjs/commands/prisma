@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run Prisma CLI inside the container (prisma studio, prisma generate, …)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[prisma] $*${NOFORMAT}"
+dip exec app "pnpm dlx prisma $*"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Description: Open redis-cli inside the valkey container
+
+dip exec valkey redis-cli

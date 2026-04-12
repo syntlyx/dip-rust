@@ -5,24 +5,72 @@ services:
       - ${PROJECT_ROOT}:/var/www/html
     env_file:
       - ${ENV_FILE}
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ${PROJECT_ROOT}:/var/www/html:ro
+      - ${PROJECT_ROOT}/.dip/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     labels:
       dip.host: "${DOMAIN}:80"
+    depends_on:
+      - app
 
   db:
     image: mysql:8
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
     labels:
       dip.db: mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  redis:
-    image: redis:7-alpine
+  valkey:
+    image: valkey/valkey:alpine
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  queue:
+    build: .
+    command: ["php", "artisan", "queue:work", "--sleep=3", "--tries=3"]
+    volumes:
+      - ${PROJECT_ROOT}:/var/www/html
+    env_file:
+      - ${ENV_FILE}
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
 
 volumes:
   db_data:
-  redis_data:
+  valkey_data:

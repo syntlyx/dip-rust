@@ -9,6 +9,7 @@ mod project;
 mod proxy;
 mod runtime;
 mod templates;
+mod tunnel;
 mod utils;
 
 use clap::Parser;
@@ -40,7 +41,9 @@ fn main() {
         Commands::Cleanup => commands::cleanup::run(v, nc),
 
         // Info
-        Commands::Status => commands::status::run(v, nc),
+        Commands::Status { format } | Commands::Ps { format } => {
+            commands::status::run(format.as_deref(), v, nc)
+        }
         Commands::Logs { service } => commands::logs::run(service, v, nc),
         Commands::Stats { service } => commands::stats::run(service, v, nc),
         Commands::Top { service } => commands::top::run(service, v, nc),
@@ -55,7 +58,7 @@ fn main() {
         Commands::Exec { service, command } => commands::shell::run_exec(&service, &command, v, nc),
 
         // Custom scripts
-        Commands::Run { script, args } => commands::run::run(&script, &args, v, nc),
+        Commands::Run { script, args } => commands::run::run(script.as_deref(), &args, v, nc),
 
         // Built-in proxy
         Commands::Proxy(sub) => match sub {
@@ -81,7 +84,7 @@ fn main() {
 
         // Database
         Commands::Db(sub) => match sub {
-            DbCommands::List => commands::db::run_list(v, nc),
+            DbCommands::List { format } => commands::db::run_list(format.as_deref(), v, nc),
             DbCommands::Dump {
                 output_path,
                 service,
@@ -90,11 +93,17 @@ fn main() {
                 input_path,
                 service,
             } => commands::db::run_import(&input_path, service.as_deref(), v, nc),
+            DbCommands::Migrate { from, to, tables } => {
+                commands::db::run_migrate(&from, &to, tables.as_deref(), v, nc)
+            }
         },
 
+        // Tunnel
+        Commands::Share { port, service } => commands::share::run(port, service.as_deref(), v, nc),
+
         // System
-        Commands::Prune => commands::prune::run(nc),
-        Commands::Update => commands::update::run(nc),
+        Commands::Prune { volumes, all } => commands::prune::run(volumes, all, nc),
+        Commands::Update { force } => commands::update::run(force, nc),
     };
 
     if let Err(e) = result {

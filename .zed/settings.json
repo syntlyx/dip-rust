@@ -4,6 +4,21 @@
       "format_on_save": "on",
       "formatter": "language_server",
     },
+    "Markdown": {
+      "format_on_save": "on",
+    },
+    "Shell Script": {
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "shfmt",
+          "arguments": ["--filename", "{buffer_path}", "--indent", "2"],
+        },
+      },
+    },
+    "Dockerfile": {
+      "format_on_save": "on",
+    },
   },
   "lsp": {
     "rust-analyzer": {

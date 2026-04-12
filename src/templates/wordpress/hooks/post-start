@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[INFO] Waiting for WordPress to start...${NOFORMAT}"
+
+RETRIES=30
+until dip exec nginx "wget -q -O- http://127.0.0.1" >/dev/null 2>&1; do
+  RETRIES=$((RETRIES - 1))
+  if [ $RETRIES -eq 0 ]; then
+    msg "${RED}[ERROR] WordPress failed to start after 60s${NOFORMAT}"
+    msg "${YELLOW}[HINT] Check logs: dip run logs${NOFORMAT}"
+    exit 1
+  fi
+  sleep 2
+done
+
+msg "${GREEN}[OK] WordPress is up → https://${DOMAIN}${NOFORMAT}"
+msg "${GREEN}[OK] Admin panel  → https://${DOMAIN}/wp-admin${NOFORMAT}"

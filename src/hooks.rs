@@ -11,6 +11,7 @@
 /// Stderr from the hook is printed to the terminal so the user can see
 /// progress/errors.  A non-zero exit code aborts the dip command.
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -95,22 +96,32 @@ fn run_hook(
 
     ensure_executable(path)?;
 
-    let output = Command::new(path)
+    let mut child = Command::new(path)
         .envs(project.get_env())
-        // Let stderr flow to the terminal so the user sees hook output
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .output()
+        .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to run hook {}: {e}", path.display()))?;
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "Hook '{}' exited with status {}",
-            path.display(),
-            output.status
-        );
+    // Stream stdout line-by-line: print each line and collect for env parsing.
+    // Lines that look like KEY=VALUE are later parsed as env exports (pre-start).
+    let mut captured = String::new();
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines() {
+            let line = line.unwrap_or_default();
+            println!("  {line}");
+            captured.push_str(&line);
+            captured.push('\n');
+        }
     }
 
-    // Parse stdout as env vars
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(env::parse_env_str(&stdout))
+    let status = child
+        .wait()
+        .map_err(|e| anyhow::anyhow!("Hook wait failed: {e}"))?;
+
+    if !status.success() {
+        anyhow::bail!("Hook '{}' exited with status {}", path.display(), status);
+    }
+
+    Ok(env::parse_env_str(&captured))
 }

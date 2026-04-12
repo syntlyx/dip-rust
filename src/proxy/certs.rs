@@ -74,14 +74,35 @@ pub fn ensure_ca() -> Result<(Certificate, KeyPair)> {
     Ok((cert, key_pair))
 }
 
-/// Ensure the server cert covers all TLDs found in `domains`.
-/// Automatically derives wildcards: "api.foo.test" → "*.foo.test".
+/// Ensure the server cert covers all domains.
+///
+/// Strategy:
+///   - Domains with 3+ labels (e.g. `api.foo.test`)  → wildcard `*.foo.test`
+///   - Domains with 2 labels  (e.g. `laravel.test`)   → exact SAN only
+///     (browsers reject TLD wildcards like `*.test`)
+///
 /// Returns `true` if the cert was (re-)generated (proxy needs restart in that case).
 pub fn ensure_server_cert(domains: &[String]) -> Result<bool> {
-    let needed = wildcard_sans(domains);
+    // Wildcards only for sub-subdomains (3+ labels); never *.tld
+    let wildcards = wildcard_sans(domains);
 
-    // If the caller passed an empty domain list but a cert already exists,
-    // leave it alone — a real cert from a previous sync is better than localhost.
+    // Exact SANs: any domain not fully covered by one of the wildcards above
+    let mut exact: BTreeSet<String> = BTreeSet::new();
+    for d in domains {
+        if d.contains('*') {
+            continue;
+        }
+        let covered = wildcards.iter().any(|w| domain_matches_wildcard(d, w));
+        if !covered {
+            exact.insert(d.clone());
+        }
+    }
+
+    // The complete set we need the cert to cover (used for regen detection)
+    let mut needed: BTreeSet<String> = wildcards.iter().cloned().collect();
+    needed.extend(exact.iter().cloned());
+
+    // Nothing to do yet but a cert exists — leave it alone
     if needed.is_empty() && srv_cert_path().exists() {
         return Ok(false);
     }
@@ -93,32 +114,28 @@ pub fn ensure_server_cert(domains: &[String]) -> Result<bool> {
     let (ca_cert, ca_key) = ensure_ca()?;
     let srv_key = KeyPair::generate()?;
 
-    // Build full SAN list: wildcards + exact non-wildcard domains
     let mut sans: Vec<String> = needed.iter().cloned().collect();
-    for d in domains {
-        if !d.contains('*') && !sans.contains(d) {
-            sans.push(d.clone());
-        }
-    }
     if sans.is_empty() {
         sans.push("localhost".to_string());
     }
 
     eprintln!("dip-proxy: generating cert with SANs: {}", sans.join(", "));
 
-    let mut params = CertificateParams::new(sans.clone())?;
-    // Use the first SAN as CN so the cert is clearly identifiable in Keychain
-    let cn = sans
-        .first()
+    // Use the first exact (non-wildcard) domain as CN so it's readable in Keychain
+    let cn = exact
+        .iter()
+        .next()
+        .or_else(|| sans.first())
         .cloned()
         .unwrap_or_else(|| "dip local".to_string());
+
+    let mut params = CertificateParams::new(sans.clone())?;
     params.distinguished_name = server_dn(&cn);
     // Chrome/Safari cap TLS cert validity at 398 days even for private CAs.
     // 397 days is the safe maximum.
     let now = OffsetDateTime::now_utc();
     params.not_before = now - time::Duration::days(1);
     params.not_after = now + time::Duration::days(397);
-    // Proper key usage for a TLS server cert
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
 
@@ -133,6 +150,17 @@ pub fn ensure_server_cert(domains: &[String]) -> Result<bool> {
 
     save_sans(&needed)?;
     Ok(true)
+}
+
+/// Returns true if `domain` is covered by the given wildcard SAN.
+/// `*.foo.test` covers `bar.foo.test` but NOT `foo.test` itself.
+fn domain_matches_wildcard(domain: &str, wildcard: &str) -> bool {
+    if let Some(suffix) = wildcard.strip_prefix("*.")
+        && let Some(dot) = domain.find('.')
+    {
+        return &domain[dot + 1..] == suffix;
+    }
+    false
 }
 
 /// Install the CA into the system trust store on macOS.
@@ -198,16 +226,24 @@ pub fn install_ca() -> Result<bool> {
 
 /// Derive minimal wildcard SANs from a list of domain patterns.
 ///
-///   "api.foo.test"    →  "*.foo.test"
-///   "*.bar.test"      →  "*.bar.test"
+///   "api.foo.test"    →  "*.foo.test"   (3 labels — safe wildcard)
+///   "*.bar.test"      →  "*.bar.test"   (pass-through)
 ///   "a.b.c.test"      →  "*.b.c.test"
+///   "laravel.test"    →  (nothing)      — 2 labels, TLD wildcard (*.test) rejected by browsers
 fn wildcard_sans(domains: &[String]) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for d in domains {
         if d.starts_with("*.") {
             out.insert(d.clone());
-        } else if let Some(dot) = d.find('.') {
-            out.insert(format!("*.{}", &d[dot + 1..]));
+        } else {
+            // Only generate a wildcard when the result covers at least 2 labels
+            // (i.e. the original domain has 3+ labels: sub.foo.tld → *.foo.tld).
+            // "laravel.test" has only 2 labels → skip, will be added as exact SAN instead.
+            let label_count = d.split('.').count();
+            if label_count >= 3 {
+                let dot = d.find('.').unwrap();
+                out.insert(format!("*.{}", &d[dot + 1..]));
+            }
         }
     }
     out

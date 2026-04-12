@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Description: Open Laravel Tinker REPL in the app container
+
+dip exec app "php artisan tinker"

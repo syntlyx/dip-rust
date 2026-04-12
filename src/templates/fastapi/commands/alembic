@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Description: Run Alembic migrations (--init, --make <msg>, --rollback)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--init)
+  msg "${YELLOW}[alembic] initializing...${NOFORMAT}"
+  dip exec app "alembic init alembic"
+  ;;
+--make)
+  msg "${YELLOW}[alembic] generating migration: ${2}${NOFORMAT}"
+  dip exec app "alembic revision --autogenerate -m '${2:-migration}'"
+  ;;
+--rollback)
+  msg "${YELLOW}[alembic] rolling back one step...${NOFORMAT}"
+  dip exec app "alembic downgrade -1"
+  ;;
+*)
+  msg "${YELLOW}[alembic] upgrading to head...${NOFORMAT}"
+  dip exec app "alembic upgrade head"
+  ;;
+esac
+
+msg "${GREEN}[alembic] done${NOFORMAT}"

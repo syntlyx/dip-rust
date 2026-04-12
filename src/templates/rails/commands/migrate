@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Description: Run database migrations (--rollback to undo last, --reset to drop and re-create)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+case "$1" in
+--rollback)
+  msg "${YELLOW}[migrate] rolling back...${NOFORMAT}"
+  dip exec app "bundle exec rails db:rollback"
+  ;;
+--reset)
+  msg "${YELLOW}[migrate] resetting database...${NOFORMAT}"
+  dip exec app "bundle exec rails db:drop db:create db:migrate db:seed"
+  ;;
+*)
+  msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
+  dip exec app "bundle exec rails db:migrate $*"
+  ;;
+esac
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

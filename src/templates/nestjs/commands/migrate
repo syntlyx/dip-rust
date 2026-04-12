@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Description: Run pending TypeORM migrations (--revert to undo last)
+# Requires: DATA_SOURCE env var pointing to your DataSource file, e.g. src/data-source.ts
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+DATA_SOURCE="${DATA_SOURCE:-src/data-source.ts}"
+
+if [ "$1" = "--revert" ]; then
+  msg "${YELLOW}[migrate] reverting last migration...${NOFORMAT}"
+  dip exec app "node_modules/.bin/ts-node -r tsconfig-paths/register \
+    node_modules/typeorm/cli.js migration:revert -d ${DATA_SOURCE}"
+else
+  msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
+  dip exec app "node_modules/.bin/ts-node -r tsconfig-paths/register \
+    node_modules/typeorm/cli.js migration:run -d ${DATA_SOURCE}"
+fi
+
+msg "${GREEN}[migrate] done${NOFORMAT}"

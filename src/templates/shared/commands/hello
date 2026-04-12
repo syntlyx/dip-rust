@@ -5,5 +5,5 @@ set -e
 
 source "${DIP_DIR}/commands/utils/color.sh"
 
-msg "${GREEN}[INFO]${NOFORMAT} Hello from {name}!"
+msg "${GREEN}[INFO]${NOFORMAT} Hello from ${PROJECT_NAME}!"
 msg "${YELLOW}[INFO]${NOFORMAT} Args: $*"

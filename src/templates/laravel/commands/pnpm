@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run pnpm inside the app container (Vite, assets)
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[pnpm] $*${NOFORMAT}"
+dip exec app "pnpm $*"
