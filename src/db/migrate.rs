@@ -318,6 +318,20 @@ struct MysqlFk {
     ref_column: String,
 }
 
+/// MySQL INFORMATION_SCHEMA columns may come back as VARBINARY (binary collation).
+/// Try String first; fall back to bytes → lossy UTF-8.
+fn row_str(
+    row: &sqlx::mysql::MySqlRow,
+    index: impl sqlx::ColumnIndex<sqlx::mysql::MySqlRow> + Copy,
+) -> String {
+    if let Ok(s) = row.try_get::<String, _>(index) {
+        return s;
+    }
+    row.try_get::<Vec<u8>, _>(index)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
+}
+
 async fn mysql_get_tables(
     pool: &MySqlPool,
     db: &str,
@@ -333,7 +347,8 @@ async fn mysql_get_tables(
 
     Ok(rows
         .iter()
-        .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+        .map(|r| row_str(r, 0))
+        .filter(|t| !t.is_empty())
         .filter(|t| match filter {
             Some(f) => f.iter().any(|x| x == t),
             None => true,
@@ -356,12 +371,11 @@ async fn mysql_get_columns(pool: &MySqlPool, db: &str, table: &str) -> Result<Ve
     Ok(rows
         .iter()
         .map(|r| {
-            let extra: String = r.try_get("EXTRA").unwrap_or_default();
-            let _col_key: String = r.try_get("COLUMN_KEY").unwrap_or_default();
-            let nullable: String = r.try_get("IS_NULLABLE").unwrap_or_default();
+            let extra = row_str(r, "EXTRA");
+            let nullable = row_str(r, "IS_NULLABLE");
             MysqlCol {
-                name: r.try_get("COLUMN_NAME").unwrap_or_default(),
-                column_type: r.try_get("COLUMN_TYPE").unwrap_or_default(),
+                name: row_str(r, "COLUMN_NAME"),
+                column_type: row_str(r, "COLUMN_TYPE"),
                 is_nullable: nullable.eq_ignore_ascii_case("YES"),
                 is_auto_increment: extra.to_lowercase().contains("auto_increment"),
             }
@@ -381,7 +395,8 @@ async fn mysql_get_pk(pool: &MySqlPool, db: &str, table: &str) -> Result<Vec<Str
     .await?;
     Ok(rows
         .iter()
-        .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+        .map(|r| row_str(r, 0))
+        .filter(|s| !s.is_empty())
         .collect())
 }
 
@@ -399,8 +414,8 @@ async fn mysql_get_indexes(pool: &MySqlPool, db: &str, table: &str) -> Result<Ve
 
     let mut indexes: Vec<MysqlIdx> = vec![];
     for row in &rows {
-        let name: String = row.try_get("INDEX_NAME").unwrap_or_default();
-        let col: String = row.try_get("COLUMN_NAME").unwrap_or_default();
+        let name = row_str(row, "INDEX_NAME");
+        let col = row_str(row, "COLUMN_NAME");
         let non_unique: i64 = row.try_get::<i64, _>("NON_UNIQUE").unwrap_or(1);
         if let Some(idx) = indexes.iter_mut().find(|i| i.name == name) {
             idx.columns.push(col);
@@ -429,10 +444,10 @@ async fn mysql_get_fks(pool: &MySqlPool, db: &str, table: &str) -> Result<Vec<My
     Ok(rows
         .iter()
         .map(|r| MysqlFk {
-            name: r.try_get("CONSTRAINT_NAME").unwrap_or_default(),
-            column: r.try_get("COLUMN_NAME").unwrap_or_default(),
-            ref_table: r.try_get("REFERENCED_TABLE_NAME").unwrap_or_default(),
-            ref_column: r.try_get("REFERENCED_COLUMN_NAME").unwrap_or_default(),
+            name: row_str(r, "CONSTRAINT_NAME"),
+            column: row_str(r, "COLUMN_NAME"),
+            ref_table: row_str(r, "REFERENCED_TABLE_NAME"),
+            ref_column: row_str(r, "REFERENCED_COLUMN_NAME"),
         })
         .collect())
 }
@@ -460,7 +475,8 @@ async fn pg_get_tables(pool: &PgPool, filter: Option<&[String]>) -> Result<Vec<S
 
     Ok(rows
         .iter()
-        .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+        .filter_map(|r| r.try_get::<String, _>(0).ok())
+        .filter(|t| !t.is_empty())
         .filter(|t| match filter {
             Some(f) => f.iter().any(|x| x == t),
             None => true,
@@ -484,7 +500,8 @@ async fn pg_get_pk(pool: &PgPool, table: &str) -> Result<Vec<String>> {
     .await?;
     Ok(rows
         .iter()
-        .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+        .filter_map(|r| r.try_get::<String, _>(0).ok())
+        .filter(|s| !s.is_empty())
         .collect())
 }
 
@@ -962,9 +979,14 @@ fn extract_mysql_cell(
             .map(|v| CellValue::Int(v as i64))
             .unwrap_or(CellValue::Null),
         "varchar" | "char" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum" | "set" => {
-            row.try_get::<Option<String>, _>(idx)?
-                .map(CellValue::Text)
-                .unwrap_or(CellValue::Null)
+            // Binary-collation tables return text as VARBINARY; try String first, then bytes→UTF-8.
+            if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
+                v.map(CellValue::Text).unwrap_or(CellValue::Null)
+            } else {
+                row.try_get::<Option<Vec<u8>>, _>(idx)?
+                    .map(|b| CellValue::Text(String::from_utf8_lossy(&b).into_owned()))
+                    .unwrap_or(CellValue::Null)
+            }
         }
         "json" => row
             .try_get::<Option<serde_json::Value>, _>(idx)?
