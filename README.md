@@ -151,11 +151,11 @@ Credentials are read directly from the container environment — no extra config
 ## Container commands
 
 ```bash
-dip start                # start all containers
+dip start                # start all containers  (alias: up)
 dip start app            # start a specific service
-dip stop
+dip stop                 # stop all containers   (alias: down)
 dip stop app             # stop a specific service
-dip restart
+dip restart              # restart all containers (alias: reup)
 dip restart app          # restart a specific service
 dip reset                # stop, remove containers, start fresh
 dip build                # build / rebuild service images
@@ -329,13 +329,30 @@ dip update               # update to the latest version
 dip update --force       # reinstall even if already on latest
 ```
 
-Add completions to your shell:
+## Shell integration
+
+Run once to enable completions and native project commands:
 
 ```bash
-dip completions zsh
-# add to ~/.zshrc:
-source ~/.config/dip/completions/dip.zsh
+dip completions zsh   # generates the file and asks to auto-add to ~/.zshrc
+dip completions bash
+dip completions fish
 ```
+
+After sourcing the generated file, two things activate automatically whenever you `cd` into a dip project (or any subdirectory):
+
+**1. Tab completions** for all `dip` subcommands and flags.
+
+**2. Native project commands** — scripts from `.dip/commands/` become available as plain shell commands, so you can type them without `dip run`:
+
+```bash
+cd my-laravel-app
+migrate        # → dip run migrate
+queue-work     # → dip run queue-work
+seed           # → dip run seed
+```
+
+Commands are activated from **any subdirectory** of the project (not just the root) and are automatically removed when you leave the project folder.
 
 ## Hooks
 

@@ -83,7 +83,7 @@ impl ContainerRuntime for DockerRuntime {
         Ok(())
     }
 
-    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str]) -> Result<()> {
+    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str], passthrough: bool) -> Result<i32> {
         let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
         cmd_args.extend_from_slice(args);
@@ -95,11 +95,11 @@ impl ContainerRuntime for DockerRuntime {
             .envs(ctx.project.get_env())
             .status()?;
 
-        let code = status.code().unwrap_or(0);
-        if !status.success() && code != 130 {
+        let code = status.code().unwrap_or(1);
+        if !status.success() && code != 130 && !passthrough {
             anyhow::bail!("docker compose command failed (exit {})", status);
         }
-        Ok(())
+        Ok(code)
     }
 
     fn compose_stream_grep(

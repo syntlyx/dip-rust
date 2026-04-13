@@ -17,6 +17,7 @@ pub mod pull;
 pub mod remove;
 pub mod reset;
 pub mod restart;
+pub mod root;
 pub mod run;
 pub mod share;
 pub mod shell;

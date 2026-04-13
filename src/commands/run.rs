@@ -56,7 +56,7 @@ pub fn run(script: Option<&str>, args: &[String], verbose: bool, no_color: bool)
         .status()?;
 
     if !status.success() {
-        anyhow::bail!("Script '{}' exited with status {}", script, status);
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     Ok(())

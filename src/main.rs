@@ -27,6 +27,7 @@ fn main() {
         Commands::Env => commands::env::run(nc),
         Commands::Open { service } => commands::open::run(service.as_deref(), nc),
         Commands::Completions { shell } => commands::completions::run(shell),
+        Commands::Root => commands::root::run(),
         Commands::Sysinfo => commands::sysinfo::run(v, nc),
         Commands::Cert => commands::cert::run(nc),
         Commands::Doctor => {
@@ -108,7 +109,9 @@ fn main() {
             DbCommands::Migrate { from, to, tables } => {
                 commands::db::run_migrate(&from, &to, tables.as_deref(), v, nc)
             }
-            DbCommands::Console { service } => commands::db::run_console(service.as_deref(), v, nc),
+            DbCommands::Console { service } => {
+                commands::db::run_console(service.as_deref(), v, nc).map(|_| ())
+            }
         },
 
         // Tunnel

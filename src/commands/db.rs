@@ -161,7 +161,7 @@ pub fn run_list(format: Option<&str>, verbose: bool, no_color: bool) -> Result<(
     Ok(())
 }
 
-pub fn run_console(service: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
+pub fn run_console(service: Option<&str>, verbose: bool, no_color: bool) -> Result<i32> {
     let ctx = Ctx::load(verbose, no_color)?;
     Runtime::check_daemon()?;
 
@@ -196,7 +196,7 @@ pub fn run_console(service: Option<&str>, verbose: bool, no_color: bool) -> Resu
     args.extend_from_slice(&cmd);
 
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    ctx.rt.compose_stream(&arg_refs)
+    ctx.rt.compose_stream(&arg_refs, false)
 }
 
 pub fn run_migrate(

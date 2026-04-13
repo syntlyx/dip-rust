@@ -82,7 +82,7 @@ pub fn run(
         ctx.rt.compose_stream_grep(&args, &kw_refs)?;
     } else {
         ctx.out.info("Ctrl+C to exit");
-        ctx.rt.compose_stream(&args)?;
+        ctx.rt.compose_stream(&args, false)?;
     }
 
     Ok(())

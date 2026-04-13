@@ -53,6 +53,10 @@ pub enum Commands {
         shell: Shell,
     },
 
+    /// Print the project root directory (exit 1 if not in a dip project)
+    #[command(hide = true)]
+    Root,
+
     /// Show system and Docker environment information
     Sysinfo,
 
@@ -64,16 +68,19 @@ pub enum Commands {
 
     // ── Container lifecycle ────────────────────────────────────────────────
     /// Start project containers (runs pre-start hook if present)
+    #[command(alias = "up")]
     Start {
         /// Specific service to start (starts all if omitted)
         service: Option<String>,
     },
     /// Stop project containers
+    #[command(alias = "down")]
     Stop {
         /// Specific service to stop (stops all if omitted)
         service: Option<String>,
     },
     /// Restart containers — stop then up -d (picks up new env vars)
+    #[command(alias = "reup")]
     Restart {
         /// Specific service to restart (restarts all if omitted)
         service: Option<String>,
@@ -174,7 +181,7 @@ pub enum Commands {
         /// Script name (file in .dip/commands/)
         script: Option<String>,
         /// Arguments passed to the script
-        #[arg(trailing_var_arg = true)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
 

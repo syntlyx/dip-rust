@@ -33,7 +33,7 @@ pub trait ContainerRuntime: Send + Sync {
     fn compose_run(&self, ctx: &BackendCtx, args: &[&str], msg: &str) -> Result<()>;
 
     /// Run a compose command with full stdio passthrough (interactive / logs).
-    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str]) -> Result<()>;
+    fn compose_stream(&self, ctx: &BackendCtx, args: &[&str], passthrough: bool) -> Result<i32>;
 
     /// Stream compose output, printing only lines that match any of `keywords` (case-insensitive).
     fn compose_stream_grep(&self, ctx: &BackendCtx, args: &[&str], keywords: &[&str])
@@ -88,8 +88,8 @@ impl Runtime {
         self.backend.compose_run(&self.ctx(), args, msg)
     }
 
-    pub fn compose_stream(&self, args: &[&str]) -> Result<()> {
-        self.backend.compose_stream(&self.ctx(), args)
+    pub fn compose_stream(&self, args: &[&str], passthrough: bool) -> Result<i32> {
+        self.backend.compose_stream(&self.ctx(), args, passthrough)
     }
 
     pub fn compose_stream_grep(&self, args: &[&str], keywords: &[&str]) -> Result<()> {

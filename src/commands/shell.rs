@@ -9,11 +9,14 @@ pub fn run_shell(service: &str, shell_type: &str, verbose: bool, no_color: bool)
         .info(&format!("Opening {shell_type} shell in '{service}'..."));
 
     // Try requested shell, fall back to sh
-    let result = ctx.rt.compose_stream(&["exec", "-it", service, shell_type]);
+    let result = ctx
+        .rt
+        .compose_stream(&["exec", "-it", service, shell_type], true);
     if result.is_err() && shell_type != "sh" {
         ctx.out
             .warning(&format!("{shell_type} not found, falling back to sh"));
-        ctx.rt.compose_stream(&["exec", "-it", service, "sh"])?;
+        ctx.rt
+            .compose_stream(&["exec", "-it", service, "sh"], true)?;
     } else {
         result?;
     }
@@ -35,6 +38,6 @@ pub fn run_exec(service: &str, command: &[String], verbose: bool, no_color: bool
     ctx.out
         .info(&format!("Running '{full_cmd}' in '{service}'..."));
     ctx.rt
-        .compose_stream(&["exec", "-i", service, "sh", "-c", full_cmd])?;
+        .compose_stream(&["exec", "-i", service, "sh", "-c", full_cmd], true)?;
     Ok(())
 }
