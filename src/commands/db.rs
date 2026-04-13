@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use colored::Colorize;
 
+use crate::commands::ctx::Ctx;
 use crate::db;
 use crate::project::ProjectConfig;
 use crate::runtime::Runtime;
@@ -158,6 +159,44 @@ pub fn run_list(format: Option<&str>, verbose: bool, no_color: bool) -> Result<(
         }
     });
     Ok(())
+}
+
+pub fn run_console(service: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
+    let ctx = Ctx::load(verbose, no_color)?;
+    Runtime::check_daemon()?;
+
+    let labeled = db::detect_by_labels(&ctx.rt.project, verbose)?;
+
+    let svc = if !labeled.is_empty() {
+        resolve_service(labeled, service, "console")?
+    } else {
+        anyhow::bail!(
+            "No dip.db labels found — add a `dip.db: postgres` or `dip.db: mysql` label to your DB service"
+        );
+    };
+
+    ctx.out.info(&format!(
+        "Opening {} console in '{}'...",
+        svc.backend.name(),
+        svc.service_name
+    ));
+
+    let cmd = svc.backend.console_cmd(&svc.config);
+    let env_pairs = svc.backend.console_env(&svc.config);
+
+    // Build: ["exec", "-e", "KEY=VAL", ..., "-it", service, cmd...]
+    // Credentials go via -e so they don't appear in `ps aux` output.
+    let mut args: Vec<String> = vec!["exec".into()];
+    for (k, v) in &env_pairs {
+        args.push("-e".into());
+        args.push(format!("{k}={v}"));
+    }
+    args.push("-it".into());
+    args.push(svc.service_name.clone());
+    args.extend_from_slice(&cmd);
+
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    ctx.rt.compose_stream(&arg_refs)
 }
 
 pub fn run_migrate(

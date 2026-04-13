@@ -102,6 +102,48 @@ impl ContainerRuntime for DockerRuntime {
         Ok(())
     }
 
+    fn compose_stream_grep(
+        &self,
+        ctx: &BackendCtx,
+        args: &[&str],
+        keywords: &[&str],
+    ) -> Result<()> {
+        use std::io::BufRead;
+
+        let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
+        let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
+        cmd_args.extend_from_slice(args);
+
+        log_cmd(ctx.verbose, &cmd_args);
+
+        let mut child = Command::new("docker")
+            .args(&cmd_args)
+            .envs(ctx.project.get_env())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+        let nc = ctx.no_color;
+
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let lower = line.to_lowercase();
+            if keywords.iter().any(|kw| lower.contains(kw)) {
+                println!("{}", colorize_compose_line(&line, nc));
+            }
+        }
+
+        let status = child.wait()?;
+        let code = status.code().unwrap_or(0);
+        if !status.success() && code != 130 {
+            anyhow::bail!("docker compose command failed (exit {})", status);
+        }
+        Ok(())
+    }
+
     fn compose_capture(&self, ctx: &BackendCtx, args: &[&str]) -> Result<String> {
         let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];

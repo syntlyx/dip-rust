@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_ROOT}:/app
+      - /app/node_modules
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:5173"

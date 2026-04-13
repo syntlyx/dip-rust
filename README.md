@@ -4,9 +4,11 @@ CLI toolkit for Docker Compose projects. Start, stop and inspect containers, man
 
 ## Features
 
-- **Project scaffolding** — `dip init` with 14 ready-to-use templates across Node.js, Python, PHP, Ruby, Go and Rust
+- **Project scaffolding** — `dip init` with an interactive template menu (16 templates across Node.js, Python, PHP, Ruby, Go and Rust)
 - **Container lifecycle** — start, stop, restart, reset with full hook lifecycle
-- **Database tools** — dump, import, and bidirectional MySQL ↔ PostgreSQL migration (streaming, no OOM on large DBs)
+- **Database tools** — dump, import, interactive console (`dip db console`), and bidirectional MySQL ↔ PostgreSQL migration (streaming, no OOM on large DBs)
+- **Log filtering** — `dip logs --grep <pattern>` or predefined presets: `--errors`, `--warn`, `--sql`, `--http`, `--slow`
+- **Health checks** — `dip doctor` checks Docker, proxy, certs, DNS, open ports, and Linux capabilities
 - **Built-in TLS proxy** — reverse proxy with automatic HTTPS, route discovery via `dip.host` labels
 - **Built-in DNS server** — no dnsmasq, no external tools — resolves `*.test` out of the box
 - **Auto-sync routes** — watches Docker events, updates routes within ~400ms when containers start/stop
@@ -85,6 +87,8 @@ Every `dip init` always applies the **shared base**: hooks, utility scripts, and
 | `nextjs`    | Next.js · PostgreSQL · Valkey · Prisma |
 | `nuxt`      | Nuxt 3 · PostgreSQL · Valkey · Prisma  |
 | `sveltekit` | SvelteKit · PostgreSQL · Prisma        |
+| `react`     | React · Vite · TypeScript              |
+| `angular`   | Angular CLI · TypeScript               |
 | `express`   | Express 5 · PostgreSQL                 |
 | `node`      | Node.js bare (bring your own stack)    |
 
@@ -112,8 +116,8 @@ Every `dip init` always applies the **shared base**: hooks, utility scripts, and
 | `rust`   | Axum · PostgreSQL · sqlx · cargo-watch        |
 
 ```bash
-dip init                          # shared base only
-dip init --template nestjs
+dip init                          # interactive menu — pick a template by number or name
+dip init --template nestjs        # skip the menu, apply template directly
 dip init --template django
 dip init --template wordpress
 # … etc
@@ -147,9 +151,12 @@ Credentials are read directly from the container environment — no extra config
 ## Container commands
 
 ```bash
-dip start
+dip start                # start all containers
+dip start app            # start a specific service
 dip stop
+dip stop app             # stop a specific service
 dip restart
+dip restart app          # restart a specific service
 dip reset                # stop, remove containers, start fresh
 dip build                # build / rebuild service images
 dip pull                 # pull latest images
@@ -159,11 +166,21 @@ dip cleanup              # remove stopped containers and dangling images
 dip status               # show container status
 dip status --format json # machine-readable output
 dip ps                   # alias for status
-dip logs                 # stream logs
-dip logs db              # logs for a specific service
+dip health               # run health checks on all services
+dip doctor               # check Docker, proxy, certs, DNS, ports, Linux caps
+
+dip logs                 # stream all logs
+dip logs app             # logs for a specific service
+dip logs --errors        # only error / exception / fatal / panic lines
+dip logs --warn          # only warning lines
+dip logs --sql           # only SQL query lines
+dip logs --http          # only HTTP request lines (method + status code)
+dip logs --slow          # only slow / timeout / deadline lines
+dip logs --grep "userId" # filter by pattern (case-insensitive)
+dip logs app --errors --grep "auth"   # flags compose freely
+
 dip stats                # CPU / memory / I/O
 dip top                  # running processes inside containers
-dip health               # run health checks on all services
 
 dip shell app            # interactive shell in a container
 dip exec app "command"   # run a command inside a container
@@ -195,6 +212,9 @@ Scripts are auto-chmod'd to executable — no `chmod +x` needed.
 dip db list                              # show detected DB services
 dip db list --format json
 
+dip db console                           # open interactive psql / mysql shell
+dip db console --service mysql           # when multiple DB services are present
+
 dip db dump ./backup.sql                 # plain SQL dump
 dip db dump ./backup.sql.gz              # gzip-compressed dump
 
@@ -221,7 +241,7 @@ What gets migrated: schema, data (streamed 500 rows at a time), indexes, foreign
 ## Reverse proxy
 
 ```bash
-dip proxy init      # generate CA + cert, set up DNS (sudo once)
+dip proxy init      # interactive setup: CA, cert, DNS (sudo once)
 dip proxy start
 dip proxy stop
 dip proxy restart
@@ -245,7 +265,16 @@ dip proxy remove api.myapp.test
 
 dip includes a built-in DNS server — no dnsmasq, no Homebrew required.
 
-`dip proxy init` configures DNS automatically. macOS uses `/etc/resolver/`, Linux uses systemd-resolved.
+`dip proxy init` is interactive and asks three questions:
+
+```
+  TLD for local domains [test]:
+  DNS port [53]:                   ← 53 on Linux, 5354 on macOS
+  Upstream DNS servers [1.1.1.1 8.8.8.8]:   ← pre-filled from your system
+```
+
+**macOS** — uses `/etc/resolver/<tld>` (supports custom port, no extra setup).  
+**Linux** — configures systemd-resolved. Defaults to port **53** so no redirect rules are needed. Uses `setcap cap_net_bind_service` once so dip can bind port 53 without running as root. CA cert is installed automatically for Debian/Ubuntu/Gentoo (`update-ca-certificates`), RHEL/Fedora (`update-ca-trust`), Arch (`trust`), and other distros with an `/etc/ssl/certs` store.
 
 ```bash
 dip proxy config                          # show current settings

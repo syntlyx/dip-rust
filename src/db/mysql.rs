@@ -2,10 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{
-    DbBackend, DbConfig, create_output_file, docker_cp_to_container, docker_rm_remote, is_gzipped,
-    remote_tmp_path,
-};
+use super::{DbBackend, DbConfig, exec_dump, exec_import, is_gzipped};
 use crate::utils::output::Output;
 
 pub struct MySqlBackend;
@@ -13,6 +10,22 @@ pub struct MySqlBackend;
 impl DbBackend for MySqlBackend {
     fn name(&self) -> &str {
         "mysql"
+    }
+
+    fn console_cmd(&self, config: &DbConfig) -> Vec<String> {
+        // Password is NOT passed here — it comes via console_env() as MYSQL_PWD.
+        vec![
+            "mysql".into(),
+            "-u".into(),
+            config.user.clone(),
+            config.db_name.clone(),
+        ]
+    }
+
+    // MYSQL_PWD is passed via `docker exec -e`, so the password never appears in
+    // command-line arguments (visible in `ps aux` / `/proc/*/cmdline`).
+    fn console_env(&self, config: &DbConfig) -> Vec<(String, String)> {
+        vec![("MYSQL_PWD".to_string(), config.password.clone())]
     }
 
     fn dump(
@@ -28,45 +41,35 @@ impl DbBackend for MySqlBackend {
             output_path.display()
         ));
 
-        let output_file = create_output_file(output_path)?;
+        let gz = is_gzipped(output_path);
+        let mysql_env = format!("MYSQL_PWD={}", config.password);
+        let cid = container_id.to_string();
+        let user = config.user.clone();
+        let db = config.db_name.clone();
 
-        let status = if is_gzipped(output_path) {
-            std::process::Command::new("docker")
-                .args([
-                    "exec",
-                    container_id,
-                    "sh",
-                    "-c",
-                    &format!(
-                        "mysqldump -uroot -p{} {} | gzip",
-                        config.password, config.db_name
-                    ),
-                ])
-                .stdout(output_file)
-                .status()?
-        } else {
-            std::process::Command::new("docker")
-                .args([
-                    "exec",
-                    container_id,
-                    "mysqldump",
-                    "-uroot",
-                    &format!("-p{}", config.password),
-                    &config.db_name,
-                ])
-                .stdout(output_file)
-                .status()?
-        };
-
-        if status.success() {
-            out.success(&format!("Database exported to {}", output_path.display()));
-            Ok(())
-        } else {
-            let _ = std::fs::remove_file(output_path);
-            anyhow::bail!(
-                "mysqldump failed — check that the db container is running and credentials are correct"
-            )
-        }
+        exec_dump(
+            output_path,
+            move || {
+                let mut cmd = std::process::Command::new("docker");
+                if gz {
+                    // Pipe requires sh -c; password is in -e (not in the shell string).
+                    let shell = format!("mysqldump -u{user} {db} | gzip");
+                    cmd.args(["exec", "-e", &mysql_env, &cid, "sh", "-c", &shell]);
+                } else {
+                    cmd.args([
+                        "exec",
+                        "-e",
+                        &mysql_env,
+                        &cid,
+                        "mysqldump",
+                        &format!("-u{user}"),
+                        &db,
+                    ]);
+                }
+                cmd
+            },
+            out,
+        )
     }
 
     fn import(
@@ -76,44 +79,47 @@ impl DbBackend for MySqlBackend {
         input_path: &Path,
         out: &Output,
     ) -> Result<()> {
-        let gz = is_gzipped(input_path);
-        let remote = remote_tmp_path(gz);
-
-        out.info("Copying dump file to container...");
-        docker_cp_to_container(container_id, input_path, remote)?;
-
         out.info(&format!(
             "Importing into MySQL database '{}'...",
             config.db_name
         ));
 
-        let import_cmd = if gz {
-            format!(
-                "gunzip -c {remote} | mysql -uroot -p{} {}",
-                config.password, config.db_name
-            )
-        } else {
-            format!(
-                "mysql -uroot -p{} {} \
-                 -e 'SET SESSION autocommit=0; SET SESSION unique_checks=0; \
-                 SET SESSION foreign_key_checks=0; SET SESSION sql_log_bin=0;' \
-                 -e 'SOURCE {remote};' \
-                 -e 'COMMIT;'",
-                config.password, config.db_name
-            )
-        };
+        let mysql_env = format!("MYSQL_PWD={}", config.password);
+        let cid = container_id.to_string();
+        let user = config.user.clone();
+        let db = config.db_name.clone();
 
-        let import_status = std::process::Command::new("docker")
-            .args(["exec", container_id, "sh", "-c", &import_cmd])
-            .status()?;
-
-        docker_rm_remote(container_id, remote);
-
-        if import_status.success() {
-            out.success("Database imported successfully");
-            Ok(())
-        } else {
-            anyhow::bail!("Database import failed")
-        }
+        exec_import(
+            container_id,
+            input_path,
+            move |gz, remote| {
+                let mut cmd = std::process::Command::new("docker");
+                if gz {
+                    // Pipe requires sh -c; password is in -e (not in the shell string).
+                    let shell = format!("gunzip -c {remote} | mysql -u{user} {db}");
+                    cmd.args(["exec", "-e", &mysql_env, &cid, "sh", "-c", &shell]);
+                } else {
+                    // Direct argv with multiple -e statements — no sh -c needed.
+                    cmd.args([
+                        "exec",
+                        "-e",
+                        &mysql_env,
+                        &cid,
+                        "mysql",
+                        &format!("-u{user}"),
+                        &db,
+                        "-e",
+                        "SET SESSION autocommit=0; SET SESSION unique_checks=0; \
+                               SET SESSION foreign_key_checks=0; SET SESSION sql_log_bin=0;",
+                        "-e",
+                        &format!("SOURCE {remote};"),
+                        "-e",
+                        "COMMIT;",
+                    ]);
+                }
+                cmd
+            },
+            out,
+        )
     }
 }

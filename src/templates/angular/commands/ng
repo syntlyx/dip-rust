@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Description: Run Angular CLI inside the app container
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+msg "${YELLOW}[ng] $*${NOFORMAT}"
+dip exec app "pnpm exec ng $*"

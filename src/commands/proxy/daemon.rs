@@ -143,7 +143,7 @@ pub(super) fn log_file() -> PathBuf {
 }
 
 /// Return the PID of the running proxy daemon, or `None` if it is not running.
-pub(super) fn daemon_pid() -> Option<u32> {
+pub fn daemon_pid() -> Option<u32> {
     let pid: u32 = std::fs::read_to_string(pid_file())
         .ok()
         .and_then(|s| s.trim().parse().ok())?;

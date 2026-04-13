@@ -17,7 +17,11 @@ pub fn run(template: Option<&str>, no_color: bool) -> Result<()> {
         anyhow::bail!(".dip/ already exists in this directory — already a dip project");
     }
 
-    let tmpl = template.map(templates::find).transpose()?;
+    // If no --template flag, show the interactive picker
+    let tmpl = match template {
+        Some(name) => Some(templates::find(name)?),
+        None => prompt_template()?,
+    };
 
     println!("Initializing new dip project in {}", cwd.display());
     if let Some(t) = &tmpl {
@@ -144,6 +148,56 @@ fn make_executable(path: &Path) -> Result<()> {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+/// Show a numbered template menu and return the chosen template (or None for bare).
+fn prompt_template() -> Result<Option<&'static templates::TemplateMeta>> {
+    use colored::Colorize;
+
+    println!("  Choose a template:");
+    println!();
+
+    // Group by language category, print with numbers
+    let all = templates::TEMPLATES;
+    for (i, t) in all.iter().enumerate() {
+        println!(
+            "    {:>2})  {:<12} {}",
+            (i + 1).to_string().cyan(),
+            t.name.bold(),
+            t.description.dimmed()
+        );
+    }
+    println!(
+        "    {:>2})  {:<12} {}",
+        "0".cyan(),
+        "none".bold(),
+        "shared base only".dimmed()
+    );
+    println!();
+
+    let input = prompt("Template", "0")?;
+    let trimmed = input.trim();
+
+    // Accept a number or a name
+    let choice = if let Ok(n) = trimmed.parse::<usize>() {
+        if n == 0 {
+            None
+        } else {
+            let t = all.get(n - 1).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid choice: {n}. Enter a number between 0 and {}",
+                    all.len()
+                )
+            })?;
+            Some(t)
+        }
+    } else if trimmed.is_empty() || trimmed == "none" {
+        None
+    } else {
+        Some(templates::find(trimmed)?)
+    };
+
+    Ok(choice)
+}
 
 fn prompt(label: &str, default: &str) -> Result<String> {
     print!("  {label} [{default}]: ");

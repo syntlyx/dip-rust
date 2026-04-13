@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ${PROJECT_ROOT}:/app
+      - /app/node_modules
+      - /app/.angular
+    env_file:
+      - ${ENV_FILE}
+    labels:
+      dip.host: "${DOMAIN}:4200"

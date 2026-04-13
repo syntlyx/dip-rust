@@ -16,6 +16,8 @@ static NESTJS: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/nestjs");
 static NEXTJS: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/nextjs");
 static NUXT: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/nuxt");
 static SVELTEKIT: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/sveltekit");
+static REACT: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/react");
+static ANGULAR: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/angular");
 static EXPRESS: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/express");
 static NODE: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/node");
 // ── Python ───────────────────────────────────────────────────────────────────
@@ -61,6 +63,16 @@ pub const TEMPLATES: &[TemplateMeta] = &[
         name: "sveltekit",
         description: "SvelteKit + PostgreSQL + Prisma",
         dir: &SVELTEKIT,
+    },
+    TemplateMeta {
+        name: "react",
+        description: "React + Vite (TypeScript)",
+        dir: &REACT,
+    },
+    TemplateMeta {
+        name: "angular",
+        description: "Angular CLI (TypeScript)",
+        dir: &ANGULAR,
     },
     TemplateMeta {
         name: "express",

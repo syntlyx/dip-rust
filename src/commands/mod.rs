@@ -4,6 +4,7 @@ pub mod cleanup;
 pub mod completions;
 pub mod ctx;
 pub mod db;
+pub mod doctor;
 pub mod env;
 pub mod health;
 pub mod init;

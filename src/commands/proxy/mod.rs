@@ -26,7 +26,7 @@ mod setup;
 pub use setup::{run_config, run_init};
 
 // Daemon lifecycle
-pub use daemon::{run_logs, run_serve, run_start, run_status, run_stop};
+pub use daemon::{daemon_pid, run_logs, run_serve, run_start, run_status, run_stop};
 
 // Route management
 pub use routes::{apply_sync, apply_unsync, run_add, run_remove, run_routes, run_sync};

@@ -29,11 +29,15 @@ fn main() {
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Sysinfo => commands::sysinfo::run(v, nc),
         Commands::Cert => commands::cert::run(nc),
+        Commands::Doctor => {
+            commands::doctor::run(nc);
+            Ok(())
+        }
 
         // Lifecycle
-        Commands::Start => commands::start::run(v, nc),
-        Commands::Stop => commands::stop::run(v, nc),
-        Commands::Restart => commands::restart::run(v, nc),
+        Commands::Start { service } => commands::start::run(service, v, nc),
+        Commands::Stop { service } => commands::stop::run(service, v, nc),
+        Commands::Restart { service } => commands::restart::run(service, v, nc),
         Commands::Build { service } => commands::build::run(service, v, nc),
         Commands::Pull => commands::pull::run(v, nc),
         Commands::Reset => commands::reset::run(v, nc),
@@ -44,7 +48,15 @@ fn main() {
         Commands::Status { format } | Commands::Ps { format } => {
             commands::status::run(format.as_deref(), v, nc)
         }
-        Commands::Logs { service } => commands::logs::run(service, v, nc),
+        Commands::Logs {
+            service,
+            grep,
+            errors,
+            warn,
+            sql,
+            http,
+            slow,
+        } => commands::logs::run(service, grep, errors, warn, sql, http, slow, v, nc),
         Commands::Stats { service } => commands::stats::run(service, v, nc),
         Commands::Top { service } => commands::top::run(service, v, nc),
         Commands::Health => commands::health::run(v, nc),
@@ -96,6 +108,7 @@ fn main() {
             DbCommands::Migrate { from, to, tables } => {
                 commands::db::run_migrate(&from, &to, tables.as_deref(), v, nc)
             }
+            DbCommands::Console { service } => commands::db::run_console(service.as_deref(), v, nc),
         },
 
         // Tunnel

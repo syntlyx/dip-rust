@@ -191,6 +191,13 @@ pub fn install_ca() -> Result<bool> {
         .stderr(std::process::Stdio::null())
         .status();
 
+    let cert_path_str = cert_path.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CA cert path contains invalid UTF-8: {}",
+            cert_path.display()
+        )
+    })?;
+
     // Add current CA and mark as a trusted root
     let status = std::process::Command::new("sudo")
         .args([
@@ -201,7 +208,7 @@ pub fn install_ca() -> Result<bool> {
             "trustRoot", // trust as a root CA for all purposes
             "-k",
             "/Library/Keychains/System.keychain",
-            cert_path.to_str().unwrap(),
+            cert_path_str,
         ])
         .status()?;
 
@@ -260,8 +267,14 @@ pub fn install_ca() -> Result<bool> {
 
     // 2. Copy the cert
     let dest = format!("{dir}/{filename}");
+    let cert_path_str = cert_path.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "CA cert path contains invalid UTF-8: {}",
+            cert_path.display()
+        )
+    })?;
     let ok = Command::new("sudo")
-        .args(["cp", cert_path.to_str().unwrap_or(""), &dest])
+        .args(["cp", cert_path_str, &dest])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -306,8 +319,10 @@ fn wildcard_sans(domains: &[String]) -> BTreeSet<String> {
             // "laravel.test" has only 2 labels → skip, will be added as exact SAN instead.
             let label_count = d.split('.').count();
             if label_count >= 3 {
-                let dot = d.find('.').unwrap();
-                out.insert(format!("*.{}", &d[dot + 1..]));
+                // label_count >= 3 guarantees a '.' exists; skip if somehow not found.
+                if let Some(dot) = d.find('.') {
+                    out.insert(format!("*.{}", &d[dot + 1..]));
+                }
             }
         }
     }

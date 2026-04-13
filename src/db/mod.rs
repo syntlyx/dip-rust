@@ -28,6 +28,13 @@ pub struct DbConfig {
 
 pub trait DbBackend {
     fn name(&self) -> &str;
+    /// Returns the argv for opening an interactive DB console inside the container.
+    fn console_cmd(&self, config: &DbConfig) -> Vec<String>;
+    /// Extra environment variables to pass via `docker exec -e` when opening a console.
+    /// Backends use this to pass credentials without leaking them in command-line args.
+    fn console_env(&self, _config: &DbConfig) -> Vec<(String, String)> {
+        vec![]
+    }
     fn dump(
         &self,
         container_id: &str,
@@ -173,6 +180,57 @@ pub fn detect_by_labels(project: &ProjectConfig, verbose: bool) -> Result<Vec<Db
     Ok(services)
 }
 
+// ─── shared execution helpers ────────────────────────────────────────────────
+
+/// Run a dump command with stdout redirected to `output_path`.
+///
+/// `build_cmd` should return a fully-configured `Command` (without stdout —
+/// that is set here). The output file is removed on failure.
+pub fn exec_dump(
+    output_path: &Path,
+    build_cmd: impl FnOnce() -> std::process::Command,
+    out: &Output,
+) -> Result<()> {
+    let output_file = create_output_file(output_path)?;
+    let status = build_cmd().stdout(output_file).status()?;
+    if status.success() {
+        out.success(&format!("Database exported to {}", output_path.display()));
+        Ok(())
+    } else {
+        let _ = std::fs::remove_file(output_path);
+        anyhow::bail!(
+            "Database dump failed — check that the container is running and credentials are correct"
+        )
+    }
+}
+
+/// Copy dump file to container, run import command, clean up temp file.
+///
+/// `build_cmd` receives `(gz: bool, remote: &str)` — the compression flag and the
+/// path of the temp file inside the container — and returns a configured `Command`.
+pub fn exec_import(
+    container_id: &str,
+    input_path: &Path,
+    build_cmd: impl FnOnce(bool, &str) -> std::process::Command,
+    out: &Output,
+) -> Result<()> {
+    let gz = is_gzipped(input_path);
+    let remote = remote_tmp_path(gz);
+
+    out.info("Copying dump file to container...");
+    docker_cp_to_container(container_id, input_path, remote)?;
+
+    let import_status = build_cmd(gz, remote).status()?;
+    docker_rm_remote(container_id, remote);
+
+    if import_status.success() {
+        out.success("Database imported successfully");
+        Ok(())
+    } else {
+        anyhow::bail!("Database import failed")
+    }
+}
+
 // ─── compression helpers ──────────────────────────────────────────────────────
 
 pub fn is_gzipped(path: &Path) -> bool {
@@ -213,11 +271,18 @@ pub fn docker_cp_to_container(container_id: &str, local: &Path, remote: &str) ->
     }
 }
 
-/// Remove a file inside a container (best-effort, errors are silently ignored).
+/// Remove a file inside a container (best-effort cleanup after import).
 pub fn docker_rm_remote(container_id: &str, remote: &str) {
-    let _ = std::process::Command::new("docker")
+    let ok = std::process::Command::new("docker")
         .args(["exec", container_id, "rm", "-f", remote])
-        .status();
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        eprintln!(
+            "  [warn] could not remove temp file {remote} from container — remove it manually if needed"
+        );
+    }
 }
 
 // ─── legacy env-based detection ──────────────────────────────────────────────

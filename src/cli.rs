@@ -59,13 +59,25 @@ pub enum Commands {
     /// Show TLS certificate info (validity, SANs, keychain trust)
     Cert,
 
+    /// Check system health: Docker, proxy, certs, DNS, ports
+    Doctor,
+
     // ── Container lifecycle ────────────────────────────────────────────────
-    /// Start all project containers (runs pre-start hook if present)
-    Start,
-    /// Stop all project containers
-    Stop,
+    /// Start project containers (runs pre-start hook if present)
+    Start {
+        /// Specific service to start (starts all if omitted)
+        service: Option<String>,
+    },
+    /// Stop project containers
+    Stop {
+        /// Specific service to stop (stops all if omitted)
+        service: Option<String>,
+    },
     /// Restart containers — stop then up -d (picks up new env vars)
-    Restart,
+    Restart {
+        /// Specific service to restart (restarts all if omitted)
+        service: Option<String>,
+    },
     /// Build or rebuild service images
     Build {
         /// Specific service to build (builds all if omitted)
@@ -101,6 +113,24 @@ pub enum Commands {
     Logs {
         /// Specific service to tail (tails all if omitted)
         service: Option<String>,
+        /// Filter lines containing this pattern (case-insensitive)
+        #[arg(long, short = 'g', value_name = "PATTERN")]
+        grep: Option<String>,
+        /// Show only error / exception / fatal / panic lines
+        #[arg(long)]
+        errors: bool,
+        /// Show only warning lines
+        #[arg(long)]
+        warn: bool,
+        /// Show only SQL query lines
+        #[arg(long)]
+        sql: bool,
+        /// Show only HTTP request lines (GET/POST/… + status codes)
+        #[arg(long)]
+        http: bool,
+        /// Show only slow / timeout / deadline lines
+        #[arg(long)]
+        slow: bool,
     },
     /// Show resource usage (CPU / memory / I/O)
     Stats {
@@ -223,6 +253,12 @@ pub enum DbCommands {
         /// Comma-separated list of tables to migrate (all tables if omitted)
         #[arg(long)]
         tables: Option<String>,
+    },
+    /// Open an interactive database console (psql / mysql)
+    Console {
+        /// Service name when multiple DB services are defined (e.g. --service mysql)
+        #[arg(short, long)]
+        service: Option<String>,
     },
 }
 
