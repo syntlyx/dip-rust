@@ -108,6 +108,12 @@ pub enum Commands {
         /// Output format: "json" for machine-readable output
         #[arg(long, value_name = "FORMAT")]
         format: Option<String>,
+        /// Refresh status every N seconds (default: 2)
+        #[arg(long)]
+        watch: bool,
+        /// Refresh interval in seconds (used with --watch)
+        #[arg(long, default_value = "2", value_name = "SECS")]
+        interval: u64,
     },
     /// Alias for `status`
     #[command(hide = true)]
@@ -115,11 +121,20 @@ pub enum Commands {
         /// Output format: "json" for machine-readable output
         #[arg(long, value_name = "FORMAT")]
         format: Option<String>,
+        /// Refresh status every N seconds (default: 2)
+        #[arg(long)]
+        watch: bool,
+        /// Refresh interval in seconds (used with --watch)
+        #[arg(long, default_value = "2", value_name = "SECS")]
+        interval: u64,
     },
     /// Stream container logs
     Logs {
         /// Specific service to tail (tails all if omitted)
         service: Option<String>,
+        /// Show logs since a timestamp or relative duration (e.g. 1h, 30m, 2024-01-01)
+        #[arg(long, value_name = "DURATION")]
+        since: Option<String>,
         /// Filter lines containing this pattern (case-insensitive)
         #[arg(long, short = 'g', value_name = "PATTERN")]
         grep: Option<String>,

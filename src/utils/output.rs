@@ -1,7 +1,6 @@
 use colored::{Color, Colorize};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
-use terminal_size::{Width, terminal_size};
 
 pub struct Output;
 
@@ -61,7 +60,7 @@ pub fn make_spinner(message: &str) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.green} {msg}")
-            .unwrap(),
+            .expect("spinner template is valid"),
     );
     pb.set_message(message.to_string());
     pb.enable_steady_tick(Duration::from_millis(80));
@@ -114,9 +113,14 @@ pub fn format_ports(raw: &str) -> String {
 
 /// Current terminal width, falling back to 80 if not a tty (e.g. pipes, CI).
 pub fn term_width() -> usize {
-    terminal_size()
-        .map(|(Width(w), _)| w as usize)
-        .unwrap_or(80)
+    #[cfg(unix)]
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 {
+            return ws.ws_col as usize;
+        }
+    }
+    80
 }
 
 /// Map a service name to a stable terminal color.

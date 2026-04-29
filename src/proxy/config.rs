@@ -65,7 +65,7 @@ pub struct Route {
 }
 
 pub fn config_path() -> PathBuf {
-    dirs::proxy_dir().join("config.toml")
+    dirs::proxy_dir().join("config.json")
 }
 
 pub fn load() -> Result<ProxyConfig> {
@@ -74,7 +74,7 @@ pub fn load() -> Result<ProxyConfig> {
         return Ok(ProxyConfig::default());
     }
     let content = std::fs::read_to_string(&path)?;
-    toml::from_str(&content).map_err(|e| anyhow::anyhow!("Invalid proxy config: {e}"))
+    serde_json::from_str(&content).map_err(|e| anyhow::anyhow!("Invalid proxy config: {e}"))
 }
 
 pub fn save(config: &ProxyConfig) -> Result<()> {
@@ -83,7 +83,7 @@ pub fn save(config: &ProxyConfig) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Invalid proxy config path: {}", path.display()))?;
     std::fs::create_dir_all(dir)?;
-    let content = toml::to_string_pretty(config)?;
+    let content = serde_json::to_string_pretty(config)?;
     std::fs::write(&path, content)?;
     Ok(())
 }

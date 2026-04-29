@@ -1,20 +1,19 @@
 [package]
 name = "dip"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+libc = "0.2"
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
-terminal_size = "0.4"
 colored = "3.0"
 indicatif = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rcgen = { version = "0.13", features = ["x509-parser"] }
 x509-parser = { version = "0.16", default-features = false }
-toml = "0.8"
 time = { version = "0.3", features = ["std"] }
 
 # Proxy server
@@ -23,10 +22,10 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 http-body-util = "0.1"
 bytes = "1"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-rustls-pemfile = "2"
+rustls-pki-types = "1.9"
 
 # DB migration
 sqlx = { version = "0.8", features = ["mysql", "postgres", "runtime-tokio", "tls-rustls", "chrono", "rust_decimal", "json"] }

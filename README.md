@@ -2,52 +2,28 @@
 
 CLI toolkit for Docker Compose projects. Start, stop and inspect containers, manage database dumps, run project scripts, and route local domains via a built-in TLS reverse proxy and DNS resolver.
 
-## Features
-
-- **Project scaffolding** — `dip init` with an interactive template menu (16 templates across Node.js, Python, PHP, Ruby, Go and Rust)
-- **Container lifecycle** — start, stop, restart, reset with full hook lifecycle
-- **Database tools** — dump, import, interactive console (`dip db console`), and bidirectional MySQL ↔ PostgreSQL migration (streaming, no OOM on large DBs)
-- **Log filtering** — `dip logs --grep <pattern>` or predefined presets: `--errors`, `--warn`, `--sql`, `--http`, `--slow`
-- **Health checks** — `dip doctor` checks Docker, proxy, certs, DNS, open ports, and Linux capabilities
-- **Built-in TLS proxy** — reverse proxy with automatic HTTPS, route discovery via `dip.host` labels
-- **Built-in DNS server** — no dnsmasq, no external tools — resolves `*.test` out of the box
-- **Auto-sync routes** — watches Docker events, updates routes within ~400ms when containers start/stop
-- **Public sharing** — `dip share` exposes a local port via a reverse SSH tunnel (no cloudflared, no extra binaries)
-- **Desktop notifications** — macOS/Linux notification after long operations (`dip build`, `dip pull`, `dip db migrate`)
-- **Project discovery** — `dip ls` lists all dip projects on the machine with live Docker status
-- **Certificate info** — `dip cert` shows CA and server cert validity, SANs, keychain trust
-- **Custom commands** — shell scripts in `.dip/commands/`, run with `dip run <name>` (lists available scripts when called without arguments)
-- **Shell completions** — bash, zsh, fish
-- **Self-update** — `dip update` / `dip update --force`
-
 ## Installation
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/syntlyx/dip-rust/main/install.sh | bash
 ```
 
-Install a specific version:
-
 ```bash
+# specific version
 curl -fsSL https://raw.githubusercontent.com/syntlyx/dip-rust/main/install.sh | bash -s -- --version 0.1.3
-```
-
-Uninstall:
-
-```bash
+# uninstall
 curl -fsSL https://raw.githubusercontent.com/syntlyx/dip-rust/main/install.sh | bash -s -- --uninstall
 ```
 
 ## Quick start
 
 ```bash
-# First time only — set up TLS proxy and DNS (asks for sudo once)
+# First time — set up TLS proxy and DNS (asks for sudo once)
 dip proxy init
 
 # Scaffold a new project
 mkdir my-api && cd my-api
-dip init                        # shared base only
-dip init --template nestjs      # NestJS + PostgreSQL + Valkey
+dip init --template nestjs
 
 # Start working
 dip start
@@ -56,321 +32,217 @@ dip start
 
 ## Project structure
 
-`dip init` creates the following layout:
-
 ```
 my-project/
-├── Dockerfile               ← present when using a framework template
+├── Dockerfile
 └── .dip/
-    ├── default.env          ← commit this — shared defaults
-    ├── .env                 ← gitignored — local overrides
+    ├── default.env          ← commit this
+    ├── .env                 ← gitignored
     ├── docker-compose.yml
-    ├── hooks/
-    │   ├── pre-start        ← runs before containers start, stdout → env vars
-    │   ├── post-start       ← runs after containers are up
-    │   ├── pre-stop         ← runs before containers stop
-    │   └── post-stop        ← runs after containers stop
-    └── commands/
-        ├── utils/color.sh
-        └── hello            ← dip run hello
+    ├── hooks/               ← pre-start, post-start, pre-stop, post-stop
+    └── commands/            ← dip run <name>
 ```
 
-### Templates
+## Templates
 
-Every `dip init` always applies the **shared base**: hooks, utility scripts, and an example command. A named template layers its own `docker-compose.yml`, `Dockerfile`, and `commands/` on top.
-
-#### Node.js
-
-| Template    | Stack                                  |
-| ----------- | -------------------------------------- |
-| `nestjs`    | NestJS · PostgreSQL · Valkey · TypeORM |
-| `nextjs`    | Next.js · PostgreSQL · Valkey · Prisma |
-| `nuxt`      | Nuxt 3 · PostgreSQL · Valkey · Prisma  |
-| `sveltekit` | SvelteKit · PostgreSQL · Prisma        |
-| `react`     | React · Vite · TypeScript              |
-| `angular`   | Angular CLI · TypeScript               |
-| `express`   | Express 5 · PostgreSQL                 |
-| `node`      | Node.js bare (bring your own stack)    |
-
-#### Python
-
-| Template  | Stack                                        |
-| --------- | -------------------------------------------- |
-| `django`  | Django · PostgreSQL · Valkey · Celery        |
-| `fastapi` | FastAPI · PostgreSQL · Valkey · Alembic · uv |
-
-#### PHP
+`dip init` is interactive — pick a template by number or pass `--template <name>`:
 
 | Template    | Stack                                           |
 | ----------- | ----------------------------------------------- |
+| `nestjs`    | NestJS · PostgreSQL · Valkey · TypeORM          |
+| `nextjs`    | Next.js · PostgreSQL · Valkey · Prisma          |
+| `nuxt`      | Nuxt 3 · PostgreSQL · Valkey · Prisma           |
+| `sveltekit` | SvelteKit · PostgreSQL · Prisma                 |
+| `react`     | React · Vite · TypeScript                       |
+| `angular`   | Angular CLI · TypeScript                        |
+| `express`   | Express 5 · PostgreSQL                          |
+| `node`      | Node.js bare                                    |
+| `django`    | Django · PostgreSQL · Valkey · Celery           |
+| `fastapi`   | FastAPI · PostgreSQL · Valkey · Alembic · uv    |
 | `laravel`   | Laravel · MySQL · Valkey · nginx · queue worker |
 | `wordpress` | WordPress · MySQL · nginx · WP-CLI              |
 | `drupal`    | Drupal 11 · MySQL · nginx · Drush               |
+| `rails`     | Ruby on Rails · PostgreSQL · Valkey · Sidekiq   |
+| `go`        | Go · PostgreSQL · Air (hot-reload)              |
+| `rust`      | Axum · PostgreSQL · sqlx · cargo-watch          |
 
-#### Other
-
-| Template | Stack                                         |
-| -------- | --------------------------------------------- |
-| `rails`  | Ruby on Rails · PostgreSQL · Valkey · Sidekiq |
-| `go`     | Go · PostgreSQL · Air (hot-reload)            |
-| `rust`   | Axum · PostgreSQL · sqlx · cargo-watch        |
-
-```bash
-dip init                          # interactive menu — pick a template by number or name
-dip init --template nestjs        # skip the menu, apply template directly
-dip init --template django
-dip init --template wordpress
-# … etc
-```
-
-All framework templates:
-
-- include a `Dockerfile` with auto-scaffold on first boot (no manual setup needed — just `dip start`)
-- include template-specific `commands/` (e.g. `dip run migrate`)
-- use Valkey instead of Redis (drop-in compatible, actively maintained fork)
+Every template includes a `Dockerfile` with auto-scaffold on first boot and template-specific `commands/` (e.g. `dip run migrate`).
 
 ## Docker Compose labels
 
-### Reverse proxy routing
-
 ```yaml
 labels:
-  dip.host: "${DOMAIN}:80"
+  dip.host: "${DOMAIN}:80" # proxy routing
   dip.host.api: "api.${DOMAIN}:3000" # multiple hosts per service
+  dip.db: mysql # database detection (or: postgres)
 ```
 
-### Database detection
+## Commands
 
-```yaml
-labels:
-  dip.db: mysql # or: postgres
-```
-
-Credentials are read directly from the container environment — no extra config needed.
-
-## Container commands
+### Container lifecycle
 
 ```bash
-dip start                # start all containers  (alias: up)
-dip start app            # start a specific service
-dip stop                 # stop all containers   (alias: down)
-dip stop app             # stop a specific service
-dip restart              # restart all containers (alias: reup)
-dip restart app          # restart a specific service
-dip reset                # stop, remove containers, start fresh
-dip build                # build / rebuild service images
+dip start [service]      # start containers  (alias: up)
+dip stop [service]       # stop containers   (alias: down)
+dip restart [service]    # restart           (alias: reup)
+dip build [service]      # build images
 dip pull                 # pull latest images
-dip remove               # remove containers
+dip reset                # stop, remove, start fresh
+dip remove [service]     # remove containers
 dip cleanup              # remove stopped containers and dangling images
+```
 
-dip status               # show container status
-dip status --format json # machine-readable output
+### Status and logs
+
+```bash
+dip status               # container status table
+dip status --watch       # auto-refresh every 2s
+dip status --watch --interval 5
+dip status --format json
 dip ps                   # alias for status
-dip health               # run health checks on all services
-dip doctor               # check Docker, proxy, certs, DNS, ports, Linux caps
 
-dip logs                 # stream all logs
-dip logs app             # logs for a specific service
-dip logs --errors        # only error / exception / fatal / panic lines
+dip logs                 # stream all logs (tail 100)
+dip logs app             # specific service
+dip logs --since 1h      # show logs from the last hour
+dip logs --since 30m
+dip logs --errors        # only error/exception/fatal/panic lines
 dip logs --warn          # only warning lines
-dip logs --sql           # only SQL query lines
-dip logs --http          # only HTTP request lines (method + status code)
-dip logs --slow          # only slow / timeout / deadline lines
+dip logs --sql           # only SQL queries
+dip logs --http          # only HTTP requests + status codes
+dip logs --slow          # only slow/timeout/deadline lines
 dip logs --grep "userId" # filter by pattern (case-insensitive)
 dip logs app --errors --grep "auth"   # flags compose freely
 
-dip stats                # CPU / memory / I/O
-dip top                  # running processes inside containers
-
-dip shell app            # interactive shell in a container
-dip exec app "command"   # run a command inside a container
+dip stats [service]      # CPU / memory / I/O
+dip top [service]        # running processes inside containers
+dip health               # run health checks
+dip doctor               # check Docker, proxy, certs, DNS, ports, Linux caps
 ```
 
-## Custom commands
-
-Place scripts in `.dip/commands/` and run them with `dip run <name>`.
+### Shell and exec
 
 ```bash
-dip run          # list all available commands with descriptions
-dip run migrate
+dip shell app            # interactive shell in a container
+dip exec app "command"   # run a one-off command
 ```
 
-Add a `# Description:` comment to any script to show it in the list:
+### Custom commands
+
+Scripts in `.dip/commands/` run with `dip run <name>`. Add a `# Description:` line to show it in the list:
 
 ```bash
 #!/usr/bin/env bash
 # Description: Run pending database migrations
-
 dip exec app "php artisan migrate --force"
 ```
 
-Scripts are auto-chmod'd to executable — no `chmod +x` needed.
+```bash
+dip run              # list all available commands
+dip run migrate
+```
 
-## Database commands
+### Database
 
 ```bash
-dip db list                              # show detected DB services
-dip db list --format json
-
-dip db console                           # open interactive psql / mysql shell
-dip db console --service mysql           # when multiple DB services are present
-
-dip db dump ./backup.sql                 # plain SQL dump
-dip db dump ./backup.sql.gz              # gzip-compressed dump
-
+dip db list                                          # show detected DB services
+dip db console [--service mysql]                     # interactive psql / mysql shell
+dip db dump ./backup.sql [--service mysql]           # plain SQL dump
+dip db dump ./backup.sql.gz                          # gzip-compressed
 dip db import ./backup.sql
-dip db import ./backup.sql.gz
-
-# Multiple DBs in one project — specify service
-dip db dump ./backup.sql --service mysql
-dip db dump ./analytics.sql --service postgres
+dip db migrate --from mysql --to postgres            # bidirectional migration
+dip db migrate --from mysql --to postgres --tables users,orders
 ```
 
-### Database migration
+Migration streams rows in chunks of 500 — memory stays constant regardless of table size. Migrates schema, data, indexes, foreign keys, and sequences.
 
-Migrate between MySQL and PostgreSQL in either direction. Rows are streamed in chunks — memory usage stays constant regardless of table size.
-
-```bash
-dip db migrate --from mysql --to postgres
-dip db migrate --from postgres --to mysql
-dip db migrate --from mysql --to postgres --tables users,orders,products
-```
-
-What gets migrated: schema, data (streamed 500 rows at a time), indexes, foreign keys, sequences.
-
-## Reverse proxy
+### Reverse proxy
 
 ```bash
-dip proxy init      # interactive setup: CA, cert, DNS (sudo once)
-dip proxy start
-dip proxy stop
-dip proxy restart
-dip proxy status
-dip proxy routes    # list all routing rules
-dip proxy logs      # tail access log
-dip proxy sync      # manually sync routes from running containers
-```
-
-Routes are discovered automatically from `dip.host` labels when you run `dip start`.  
-The proxy also watches Docker events and updates routes automatically when containers start or stop.
-
-### Manual route management
-
-```bash
+dip proxy init            # one-time setup: CA cert, DNS, keychain trust
+dip proxy start / stop / restart / status
+dip proxy logs [-n 100]   # tail access log
+dip proxy routes          # list routing rules
+dip proxy sync            # manually sync routes from running containers
 dip proxy add api.myapp.test 127.0.0.1:3000
 dip proxy remove api.myapp.test
-```
-
-## DNS
-
-dip includes a built-in DNS server — no dnsmasq, no Homebrew required.
-
-`dip proxy init` is interactive and asks three questions:
-
-```
-  TLD for local domains [test]:
-  DNS port [53]:                   ← 53 on Linux, 5354 on macOS
-  Upstream DNS servers [1.1.1.1 8.8.8.8]:   ← pre-filled from your system
-```
-
-**macOS** — uses `/etc/resolver/<tld>` (supports custom port, no extra setup).  
-**Linux** — configures systemd-resolved. Defaults to port **53** so no redirect rules are needed. Uses `setcap cap_net_bind_service` once so dip can bind port 53 without running as root. CA cert is installed automatically for Debian/Ubuntu/Gentoo (`update-ca-certificates`), RHEL/Fedora (`update-ca-trust`), Arch (`trust`), and other distros with an `/etc/ssl/certs` store.
-
-```bash
 dip proxy config                          # show current settings
 dip proxy config --tld myapp             # resolve *.myapp instead of *.test
 dip proxy config --tld "test,local"      # multiple TLDs
-dip proxy config --dns-port 5381         # change DNS port
+dip proxy config --dns-port 5381
 ```
 
-> **Note:** The proxy handles HTTP/HTTPS only (ports 80/443). For TCP services (MySQL, PostgreSQL), expose the port in `docker-compose.yml` and connect via `myapp.test:3306` — DNS resolves all `*.test` to `127.0.0.1`.
+Routes are discovered automatically from `dip.host` labels on `dip start` and updated in ~400ms when containers start or stop.
 
-## Sharing
+### DNS
 
-`dip share` opens a public HTTPS tunnel to a local port — no cloudflared, no extra tools.
+dip includes a built-in DNS server — no dnsmasq, no Homebrew.
+
+`dip proxy init` configures DNS interactively (TLD, port, upstream servers).
+
+- **macOS** — writes `/etc/resolver/<tld>` (custom port supported, no extra setup)
+- **Linux** — configures systemd-resolved; defaults to port 53 so no iptables redirect is needed; uses `setcap cap_net_bind_service` once
+
+> The proxy handles HTTP/HTTPS (ports 80/443). TCP services like MySQL/PostgreSQL work via `myapp.test:3306` — DNS resolves all `*.test` to `127.0.0.1`.
+
+### Sharing
 
 ```bash
-dip share                    # auto-detect port from dip.host labels
+dip share                   # expose port from dip.host labels
 dip share --port 3000
-dip share --service backend  # pick port from a specific compose service
+dip share --service backend
 ```
 
-```
-  Tunneling localhost:3000 → localhost.run
-  Press Ctrl+C to stop
+Opens a public HTTPS tunnel via a reverse SSH tunnel — no cloudflared, no extra binaries.
 
-  ✓ Public URL: https://abc123def.lhr.life
-```
-
-## Notifications
-
-Long-running commands send a desktop notification when they finish.
-
-| Command          | Notification                                   |
-| ---------------- | ---------------------------------------------- |
-| `dip build`      | `my-project — build complete`                  |
-| `dip pull`       | `my-project — pull complete`                   |
-| `dip db migrate` | `my-project — migrate mysql→postgres complete` |
-
-macOS uses `osascript` (built-in). Linux uses `notify-send` (libnotify).
-
-## Utilities
+### Utilities
 
 ```bash
-dip env                  # show resolved project environment variables
-dip ls                   # list all dip projects on this machine
-dip ls --root ~/work
-dip cert                 # show TLS certificate info
-dip open                 # open project URL in browser
-dip open api             # open a specific service domain
-dip sysinfo              # show system and Docker environment info
-dip completions zsh      # generate shell completions
-dip update               # update to the latest version
-dip update --force       # reinstall even if already on latest
+dip env               # show resolved project environment variables
+dip ls [--root ~/work] # list all dip projects on this machine with live status
+dip cert              # TLS certificate info (validity, SANs, keychain trust)
+dip open [service]    # open project URL in browser
+dip sysinfo           # system and Docker environment info
+dip prune [--volumes] [--all]
+dip update [--force]
+dip completions zsh   # generate shell completions (bash / zsh / fish)
 ```
 
 ## Shell integration
 
-Run once to enable completions and native project commands:
+Run once to enable completions and project commands:
 
 ```bash
-dip completions zsh   # generates the file and asks to auto-add to ~/.zshrc
-dip completions bash
-dip completions fish
+dip completions zsh   # generates file and offers to add to ~/.zshrc
 ```
 
-After sourcing the generated file, two things activate automatically whenever you `cd` into a dip project (or any subdirectory):
-
-**1. Tab completions** for all `dip` subcommands and flags.
-
-**2. Native project commands** — scripts from `.dip/commands/` become available as plain shell commands, so you can type them without `dip run`:
+After sourcing: tab completions activate for all `dip` subcommands, and scripts from `.dip/commands/` become available as plain shell commands from any subdirectory of the project:
 
 ```bash
 cd my-laravel-app
 migrate        # → dip run migrate
 queue-work     # → dip run queue-work
-seed           # → dip run seed
 ```
-
-Commands are activated from **any subdirectory** of the project (not just the root) and are automatically removed when you leave the project folder.
 
 ## Hooks
 
-Scripts in `.dip/hooks/` run automatically during the container lifecycle.  
-Stdout from `pre-start` is parsed as `KEY=VALUE` env vars injected into docker-compose.
+Scripts in `.dip/hooks/` run automatically during the container lifecycle. Stdout from `pre-start` is parsed as `KEY=VALUE` and injected into docker-compose.
 
-| Hook         | Failure | When                    |
-| ------------ | ------- | ----------------------- |
-| `pre-start`  | aborts  | before containers start |
-| `post-start` | warning | after containers are up |
-| `pre-stop`   | warning | before containers stop  |
-| `post-stop`  | warning | after containers stop   |
+| Hook         | On failure | When                    |
+| ------------ | ---------- | ----------------------- |
+| `pre-start`  | aborts     | before containers start |
+| `post-start` | warning    | after containers are up |
+| `pre-stop`   | warning    | before containers stop  |
+| `post-stop`  | warning    | after containers stop   |
 
 ```bash
 #!/usr/bin/env bash
 # .dip/hooks/pre-start — export AWS credentials into the compose environment
 aws configure export-credentials --format env
 ```
+
+## Notifications
+
+Desktop notification when long-running commands finish (`dip build`, `dip pull`, `dip db migrate`). Uses `osascript` on macOS and `notify-send` on Linux.
 
 ## License
 

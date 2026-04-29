@@ -20,6 +20,7 @@ const SLOW: &[&str] = &["slow", "timeout", "exceeded", "deadline", "timed out"];
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     service: Option<String>,
+    since: Option<String>,
     grep: Option<String>,
     errors: bool,
     warn: bool,
@@ -65,6 +66,11 @@ pub fn run(
 
     // Build compose args.
     let mut args = vec!["logs", "-f", "--tail=100"];
+    let since_arg;
+    if let Some(ref s) = since {
+        since_arg = format!("--since={s}");
+        args.push(since_arg.as_str());
+    }
     if let Some(ref svc) = service {
         args.push(svc.as_str());
     }

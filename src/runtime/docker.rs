@@ -42,8 +42,14 @@ impl ContainerRuntime for DockerRuntime {
             .stderr(Stdio::piped())
             .spawn()?;
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("stdout not captured"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("stderr not captured"))?;
 
         let pb_out = pb.clone();
         let nc = ctx.no_color;
@@ -123,7 +129,10 @@ impl ContainerRuntime for DockerRuntime {
             .stderr(Stdio::null())
             .spawn()?;
 
-        let stdout = child.stdout.take().unwrap();
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("stdout not captured"))?;
         let nc = ctx.no_color;
 
         for line in std::io::BufReader::new(stdout)

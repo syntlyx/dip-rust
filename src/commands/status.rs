@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use colored::Colorize;
 
@@ -5,12 +7,18 @@ use crate::commands::ctx::Ctx;
 use crate::utils::containers::{fetch_containers, state_icon};
 use crate::utils::output::{format_ports, service_color};
 
-pub fn run(format: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
+pub fn run(
+    format: Option<&str>,
+    watch: bool,
+    interval: u64,
+    verbose: bool,
+    no_color: bool,
+) -> Result<()> {
     let ctx = Ctx::load(verbose, no_color)?;
     let project_name = ctx.rt.project.project_name.clone();
-    let containers = fetch_containers(&ctx.rt, verbose)?;
 
     if format == Some("json") {
+        let containers = fetch_containers(&ctx.rt, verbose)?;
         let json = serde_json::json!({
             "project": project_name,
             "containers": containers,
@@ -18,6 +26,32 @@ pub fn run(format: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&json)?);
         return Ok(());
     }
+
+    if watch {
+        let delay = Duration::from_secs(interval);
+        loop {
+            // Move cursor to top-left and clear screen for in-place refresh.
+            print!("\x1b[H\x1b[2J");
+            let now = chrono::Local::now().format("%H:%M:%S");
+            println!(
+                "  {} {}s  {}",
+                "watch".dimmed(),
+                interval,
+                now.to_string().dimmed()
+            );
+            // Ignore errors mid-loop — containers may be momentarily unreachable.
+            let _ = print_table(&ctx, &project_name, verbose);
+            std::thread::sleep(delay);
+        }
+    }
+
+    print_table(&ctx, &project_name, verbose)
+}
+
+// ─── rendering ────────────────────────────────────────────────────────────────
+
+fn print_table(ctx: &Ctx, project_name: &str, verbose: bool) -> Result<()> {
+    let containers = fetch_containers(&ctx.rt, verbose)?;
 
     let col_w = containers
         .iter()
@@ -55,9 +89,11 @@ pub fn run(format: Option<&str>, verbose: bool, no_color: bool) -> Result<()> {
             format!("  {}", ports.dimmed())
         };
 
-        let uptime = c.status.strip_prefix("Up ").unwrap_or("").trim();
-        let uptime_str = if !uptime.is_empty() && c.state == "running" {
-            format!("  {}", uptime.dimmed())
+        let uptime_str = if c.state == "running" {
+            c.status
+                .strip_prefix("Up ")
+                .map(|u| format!("  {}", u.trim().dimmed()))
+                .unwrap_or_default()
         } else if c.state == "exited" {
             format!("  {}", c.status.dimmed())
         } else {

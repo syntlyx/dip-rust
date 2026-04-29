@@ -205,6 +205,8 @@ fn we_own_resolver_dir() -> bool {
         let Ok(meta) = std::fs::metadata(RESOLVER_DIR) else {
             return false;
         };
+        // SAFETY: getuid() has no preconditions; it never fails and does not
+        // touch Rust-managed memory. Always safe to call on Unix.
         unsafe extern "C" {
             fn getuid() -> u32;
         }

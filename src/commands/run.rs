@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 
@@ -40,17 +40,28 @@ pub fn run(script: Option<&str>, args: &[String], verbose: bool, no_color: bool)
         }
     }
 
-    ensure_executable(&script_path)?;
+    // Guard against path traversal (e.g. "../../etc/passwd")
+    let canonical = script_path
+        .canonicalize()
+        .map_err(|_| anyhow::anyhow!("Script '{}' not found", script))?;
+    let canonical_dir = commands_dir
+        .canonicalize()
+        .unwrap_or_else(|_| commands_dir.clone());
+    if !canonical.starts_with(&canonical_dir) {
+        anyhow::bail!("Script '{}' is outside the commands directory", script);
+    }
+
+    ensure_executable(&canonical)?;
 
     if verbose {
         ctx.out.info(&format!(
             "Running: {} {}",
-            script_path.display(),
+            canonical.display(),
             args.join(" ")
         ));
     }
 
-    let status = std::process::Command::new(&script_path)
+    let status = std::process::Command::new(&canonical)
         .args(args)
         .envs(ctx.rt.project.get_env())
         .status()?;
@@ -134,7 +145,7 @@ fn list_scripts(commands_dir: &Path) -> Vec<ScriptInfo> {
 }
 
 /// Read the first `# Description:` comment from a script file.
-fn read_description(path: &PathBuf) -> Option<String> {
+fn read_description(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
 

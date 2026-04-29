@@ -171,7 +171,7 @@ fn patch_rc(rc_path: &str, line: &str) -> Result<()> {
     // Check if already present
     if path.exists() {
         let content = std::fs::read_to_string(path)?;
-        if content.contains(line) {
+        if content.lines().any(|l| l.trim() == line) {
             println!("Already present in {rc_path} — nothing to do.");
             return Ok(());
         }

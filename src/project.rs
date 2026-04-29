@@ -13,7 +13,9 @@ pub struct ProjectConfig {
     pub env_file: PathBuf,
     pub compose_file: PathBuf,
     pub project_name: String,
-    env_vars: HashMap<String, String>,
+    // Pre-built merged env: system env + .env vars + dip constants (uid/gid, paths).
+    // Built once at load() so get_env() is a cheap clone with no subprocess calls.
+    env: HashMap<String, String>,
 }
 
 impl ProjectConfig {
@@ -49,13 +51,35 @@ impl ProjectConfig {
                 )
             })?;
 
+        // uid/gid: on Linux this spawns `id -u` / `id -g`, so do it once here.
+        let (uid, gid) = get_uid_gid();
+
+        let mut env: HashMap<String, String> = std::env::vars().collect();
+        env.extend(env_vars);
+        env.insert(
+            config::ENV_PROJECT_ROOT.to_string(),
+            root_dir.to_string_lossy().into_owned(),
+        );
+        env.insert(config::ENV_PROJECT_NAME.to_string(), project_name.clone());
+        env.insert(config::ENV_COMPOSE_NAME.to_string(), project_name.clone());
+        env.insert(
+            config::ENV_DIP_DIR.to_string(),
+            dip_dir.to_string_lossy().into_owned(),
+        );
+        env.insert(
+            config::ENV_FILE.to_string(),
+            env_file.to_string_lossy().into_owned(),
+        );
+        env.insert(config::ENV_HOST_UID.to_string(), uid);
+        env.insert(config::ENV_HOST_GID.to_string(), gid);
+
         Ok(Self {
             root_dir,
             dip_dir,
             env_file,
             compose_file,
             project_name,
-            env_vars,
+            env,
         })
     }
 
@@ -63,40 +87,12 @@ impl ProjectConfig {
     /// Called after running hooks so hook output (e.g. AWS credentials) flows
     /// into every subsequent docker-compose invocation.
     pub fn merge_env(&mut self, vars: HashMap<String, String>) {
-        self.env_vars.extend(vars);
+        self.env.extend(vars);
     }
 
-    /// Build the full environment for docker-compose, merging system env + .env overrides
+    /// Returns the full environment for docker-compose invocations.
     pub fn get_env(&self) -> HashMap<String, String> {
-        let mut env: HashMap<String, String> = std::env::vars().collect();
-        env.extend(self.env_vars.clone());
-
-        let (uid, gid) = get_uid_gid();
-
-        env.insert(
-            config::ENV_PROJECT_ROOT.to_string(),
-            self.root_dir.to_string_lossy().into_owned(),
-        );
-        env.insert(
-            config::ENV_PROJECT_NAME.to_string(),
-            self.project_name.clone(),
-        );
-        env.insert(
-            config::ENV_COMPOSE_NAME.to_string(),
-            self.project_name.clone(),
-        );
-        env.insert(
-            config::ENV_DIP_DIR.to_string(),
-            self.dip_dir.to_string_lossy().into_owned(),
-        );
-        env.insert(
-            config::ENV_FILE.to_string(),
-            self.env_file.to_string_lossy().into_owned(),
-        );
-        env.insert(config::ENV_HOST_UID.to_string(), uid);
-        env.insert(config::ENV_HOST_GID.to_string(), gid);
-
-        env
+        self.env.clone()
     }
 }
 
@@ -116,30 +112,13 @@ fn find_project_root() -> Option<PathBuf> {
 }
 
 fn get_uid_gid() -> (String, String) {
-    // On macOS, Docker runs inside a Linux VM with its own filesystem layer
-    // (OrbStack / Docker Desktop). UID/GID matching between host and container
-    // is not needed — the VM handles permissions transparently.
-    // Using 1000:1000 avoids conflicts with macOS system GIDs (e.g. GID 20 = staff
-    // already exists in most Linux base images as "dialout").
-    #[cfg(target_os = "macos")]
-    return ("1000".to_string(), "1000".to_string());
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // On Linux, bind-mounted files are shared directly with the host kernel.
-        // UID/GID must match so the container user can read/write mounted files.
-        let uid = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|_| "1000".to_string());
-
-        let gid = std::process::Command::new("id")
-            .arg("-g")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|_| "1000".to_string());
-
-        (uid, gid)
+    // macOS: Docker runs in a Linux VM, UID/GID matching not needed.
+    // 1000:1000 avoids GID conflicts (e.g. macOS GID 20 = "staff" → "dialout" in Linux images).
+    if cfg!(target_os = "macos") {
+        return ("1000".to_string(), "1000".to_string());
     }
+    // Linux: bind-mounts share the host kernel's filesystem — UID/GID must match.
+    let uid = unsafe { libc::getuid() };
+    let gid = unsafe { libc::getgid() };
+    (uid.to_string(), gid.to_string())
 }

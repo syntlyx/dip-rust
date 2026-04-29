@@ -46,18 +46,26 @@ fn main() {
         Commands::Cleanup => commands::cleanup::run(v, nc),
 
         // Info
-        Commands::Status { format } | Commands::Ps { format } => {
-            commands::status::run(format.as_deref(), v, nc)
+        Commands::Status {
+            format,
+            watch,
+            interval,
         }
+        | Commands::Ps {
+            format,
+            watch,
+            interval,
+        } => commands::status::run(format.as_deref(), watch, interval, v, nc),
         Commands::Logs {
             service,
+            since,
             grep,
             errors,
             warn,
             sql,
             http,
             slow,
-        } => commands::logs::run(service, grep, errors, warn, sql, http, slow, v, nc),
+        } => commands::logs::run(service, since, grep, errors, warn, sql, http, slow, v, nc),
         Commands::Stats { service } => commands::stats::run(service, v, nc),
         Commands::Top { service } => commands::top::run(service, v, nc),
         Commands::Health => commands::health::run(v, nc),
@@ -110,7 +118,11 @@ fn main() {
                 commands::db::run_migrate(&from, &to, tables.as_deref(), v, nc)
             }
             DbCommands::Console { service } => {
-                commands::db::run_console(service.as_deref(), v, nc).map(|_| ())
+                match commands::db::run_console(service.as_deref(), v, nc) {
+                    Ok(code) if code != 0 => std::process::exit(code),
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e),
+                }
             }
         },
 
