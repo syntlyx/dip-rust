@@ -26,7 +26,7 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a new dip project in the current directory
     Init {
-        /// Project template: nestjs, nextjs, node, laravel (shared base is always applied)
+        /// Project template: nestjs, nextjs, node, node-multi, laravel (shared base is always applied)
         #[arg(long, short = 't')]
         template: Option<String>,
     },

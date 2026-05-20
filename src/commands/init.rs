@@ -504,4 +504,23 @@ mod tests {
         );
         assert!(!env.contains("{PROJECT_NAME}"), "placeholder still present");
     }
+
+    #[test]
+    fn apply_node_multi_template_adds_apps_and_env_files() {
+        let dip = tempdir().unwrap().path().join(".dip");
+        let tmpl = crate::templates::find("node-multi").unwrap();
+        apply(&dip, Some(tmpl.dir), "workspace", "workspace.test").unwrap();
+
+        let compose = fs::read_to_string(dip.join("docker-compose.yml")).unwrap();
+        assert!(compose.contains("app-web"), "web app service missing");
+        assert!(compose.contains("app-api"), "api app service missing");
+        assert!(compose.contains("app-worker"), "worker app service missing");
+        assert!(
+            compose.contains("postgres-default"),
+            "shared postgres service missing"
+        );
+        assert!(dip.join("env/base.env").exists(), "base env missing");
+        assert!(dip.join("env/web.env").exists(), "web env missing");
+        assert!(dip.join("commands/pnpm").exists(), "pnpm command missing");
+    }
 }

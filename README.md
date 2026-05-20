@@ -34,9 +34,9 @@ dip start
 
 ```
 my-project/
-├── Dockerfile
 └── .dip/
     ├── default.env          ← commit this
+    ├── Dockerfile           ← commit this
     ├── .env                 ← gitignored
     ├── docker-compose.yml
     ├── hooks/               ← pre-start, post-start, pre-stop, post-stop
@@ -47,26 +47,42 @@ my-project/
 
 `dip init` is interactive — pick a template by number or pass `--template <name>`:
 
-| Template    | Stack                                           |
-| ----------- | ----------------------------------------------- |
-| `nestjs`    | NestJS · PostgreSQL · Valkey · TypeORM          |
-| `nextjs`    | Next.js · PostgreSQL · Valkey · Prisma          |
-| `nuxt`      | Nuxt 3 · PostgreSQL · Valkey · Prisma           |
-| `sveltekit` | SvelteKit · PostgreSQL · Prisma                 |
-| `react`     | React · Vite · TypeScript                       |
-| `angular`   | Angular CLI · TypeScript                        |
-| `express`   | Express 5 · PostgreSQL                          |
-| `node`      | Node.js bare                                    |
-| `django`    | Django · PostgreSQL · Valkey · Celery           |
-| `fastapi`   | FastAPI · PostgreSQL · Valkey · Alembic · uv    |
-| `laravel`   | Laravel · MySQL · Valkey · nginx · queue worker |
-| `wordpress` | WordPress · MySQL · nginx · WP-CLI              |
-| `drupal`    | Drupal 11 · MySQL · nginx · Drush               |
-| `rails`     | Ruby on Rails · PostgreSQL · Valkey · Sidekiq   |
-| `go`        | Go · PostgreSQL · Air (hot-reload)              |
-| `rust`      | Axum · PostgreSQL · sqlx · cargo-watch          |
+| Template     | Stack                                           |
+| ------------ | ----------------------------------------------- |
+| `nestjs`     | NestJS · PostgreSQL · Valkey · TypeORM          |
+| `nextjs`     | Next.js · PostgreSQL · Valkey · Prisma          |
+| `nuxt`       | Nuxt 3 · PostgreSQL · Valkey · Prisma           |
+| `sveltekit`  | SvelteKit · PostgreSQL · Prisma                 |
+| `react`      | React · Vite · TypeScript                       |
+| `angular`    | Angular CLI · TypeScript                        |
+| `express`    | Express 5 · PostgreSQL                          |
+| `node`       | Node.js bare                                    |
+| `node-multi` | Node.js multi-app workspace · PostgreSQL        |
+| `django`     | Django · PostgreSQL · Valkey · Celery           |
+| `fastapi`    | FastAPI · PostgreSQL · Valkey · Alembic · uv    |
+| `laravel`    | Laravel · MySQL · Valkey · nginx · queue worker |
+| `wordpress`  | WordPress · MySQL · nginx · WP-CLI              |
+| `drupal`     | Drupal 11 · MySQL · nginx · Drush               |
+| `rails`      | Ruby on Rails · PostgreSQL · Valkey · Sidekiq   |
+| `go`         | Go · PostgreSQL · Air (hot-reload)              |
+| `rust`       | Axum · PostgreSQL · sqlx · cargo-watch          |
 
 Every template includes a `Dockerfile` with auto-scaffold on first boot and template-specific `commands/` (e.g. `dip run migrate`).
+
+### Multi-app example
+
+`node-multi` is a neutral monorepo-style example for projects with several app services sharing one workspace and database:
+
+```bash
+dip init --template node-multi
+dip start
+dip open web
+dip logs app-api
+dip restart app-worker
+dip run pnpm app-api install
+```
+
+The generated compose file uses `app-web`, `app-api`, `app-worker`, a shared `postgres-default`, and `dip.host` labels such as `web.${DOMAIN}` and `api.${DOMAIN}`. Treat it as a starting point and rename the services/env files to match your project.
 
 ## Docker Compose labels
 

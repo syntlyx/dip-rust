@@ -20,6 +20,7 @@ static REACT: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/react");
 static ANGULAR: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/angular");
 static EXPRESS: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/express");
 static NODE: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/node");
+static NODE_MULTI: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/node-multi");
 // ── Python ───────────────────────────────────────────────────────────────────
 static DJANGO: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/django");
 static FASTAPI: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/templates/fastapi");
@@ -83,6 +84,11 @@ pub const TEMPLATES: &[TemplateMeta] = &[
         name: "node",
         description: "Node.js (bare, bring your own stack)",
         dir: &NODE,
+    },
+    TemplateMeta {
+        name: "node-multi",
+        description: "Node.js multi-app workspace + PostgreSQL",
+        dir: &NODE_MULTI,
     },
     // ── Python ────────────────────────────────────────────────────────────────
     TemplateMeta {

@@ -1,0 +1,94 @@
+x-app: &app
+  restart: unless-stopped
+  build:
+    context: .
+  volumes:
+    - ${PROJECT_ROOT}:/app
+    - /app/node_modules
+    - pnpm_store:/pnpm/store
+  env_file:
+    - ${ENV_FILE}
+    - ${DIP_DIR}/env/base.env
+  networks:
+    - internal
+    - external
+
+services:
+  app-web:
+    <<: *app
+    ports:
+      - "3001:${APP_PORT}"
+    env_file:
+      - ${ENV_FILE}
+      - ${DIP_DIR}/env/base.env
+      - ${DIP_DIR}/env/web.env
+    environment:
+      APP_ID: web
+    labels:
+      dip.host: "web.${DOMAIN}:${APP_PORT}"
+    depends_on:
+      postgres-default:
+        condition: service_healthy
+    command: pnpm dev:web
+
+  app-api:
+    <<: *app
+    ports:
+      - "3002:${APP_PORT}"
+    env_file:
+      - ${ENV_FILE}
+      - ${DIP_DIR}/env/base.env
+      - ${DIP_DIR}/env/api.env
+    environment:
+      APP_ID: api
+    labels:
+      dip.host: "api.${DOMAIN}:${APP_PORT}"
+    depends_on:
+      postgres-default:
+        condition: service_healthy
+    command: pnpm dev:api
+
+  app-worker:
+    <<: *app
+    env_file:
+      - ${ENV_FILE}
+      - ${DIP_DIR}/env/base.env
+      - ${DIP_DIR}/env/worker.env
+    environment:
+      APP_ID: worker
+    depends_on:
+      postgres-default:
+        condition: service_healthy
+    command: pnpm dev:worker
+
+  postgres-default:
+    image: postgres:alpine
+    ports:
+      - "5432:${POSTGRES_DEFAULT_PORT}"
+    volumes:
+      - postgres_default:/var/lib/postgresql
+    networks:
+      - internal
+    environment:
+      POSTGRES_USER: ${POSTGRES_DEFAULT_USER}
+      POSTGRES_DB: ${POSTGRES_DEFAULT_DATABASE}
+      POSTGRES_PASSWORD: ${POSTGRES_DEFAULT_PASSWORD}
+    labels:
+      dip.db: postgres
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_DEFAULT_USER} -d ${POSTGRES_DEFAULT_DATABASE}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  internal:
+  external:
+
+volumes:
+  postgres_default:
+  pnpm_store:

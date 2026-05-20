@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Description: Run pnpm inside a selected app container
+
+set -e
+source "${DIP_DIR}/commands/utils/color.sh"
+
+service="${1:-app-web}"
+if [[ "$service" == app-* ]]; then
+  shift || true
+else
+  service="${DIP_SERVICE:-app-web}"
+fi
+
+msg "${YELLOW}[pnpm:${service}] $*${NOFORMAT}"
+dip exec "${service}" "pnpm $*"
