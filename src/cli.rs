@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+#[cfg(target_os = "macos")]
+use clap::ValueEnum;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -38,8 +40,39 @@ pub enum Commands {
         root: Option<std::path::PathBuf>,
     },
 
-    /// Show resolved project environment variables
-    Env,
+    /// Show or inspect project environment variables
+    Env {
+        #[command(subcommand)]
+        command: Option<EnvCommands>,
+    },
+
+    /// Validate the current .dip project configuration
+    Validate {
+        /// Apply safe fixes for obvious config drift
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Explain resolved dip/Docker Compose configuration
+    #[command(subcommand)]
+    Explain(ExplainCommands),
+
+    /// Benchmark available container runtimes
+    #[command(subcommand)]
+    Bench(BenchCommands),
+
+    /// Set the default container runtime
+    #[cfg(target_os = "macos")]
+    Use {
+        /// Runtime to use by default
+        runtime: RuntimeChoice,
+        /// Store the choice in the current project's .dip/runtime file
+        #[arg(long, conflicts_with = "global")]
+        project: bool,
+        /// Store the choice in ~/.config/dip/runtime
+        #[arg(long, conflicts_with = "project")]
+        global: bool,
+    },
 
     /// Open the project URL in the default browser
     Open {
@@ -237,6 +270,106 @@ pub enum Commands {
         /// Re-download and reinstall even if already on the latest version
         #[arg(long, short)]
         force: bool,
+    },
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, ValueEnum)]
+pub enum RuntimeChoice {
+    /// Use Docker-compatible `docker compose`
+    Docker,
+    /// Use Apple's `container` runtime
+    Apple,
+    /// Clear the selected runtime preference
+    Auto,
+}
+
+#[derive(Subcommand)]
+pub enum EnvCommands {
+    /// Compare .dip/default.env with .dip/.env
+    Diff {
+        /// Show changed values. Disabled by default to avoid leaking secrets.
+        #[arg(long)]
+        show_values: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ExplainCommands {
+    /// Explain Docker build settings for one service or all buildable services
+    Build {
+        /// Specific service to inspect
+        service: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BenchCommands {
+    /// Benchmark command latency and container disk I/O
+    Runtime {
+        /// Number of samples per benchmark
+        #[arg(long, short = 'n', default_value_t = 10)]
+        iterations: usize,
+        /// Unmeasured warmup runs before collecting samples
+        #[arg(long, default_value_t = 2)]
+        warmup: usize,
+        /// Test image to run for each runtime
+        #[arg(long, default_value = "busybox:latest")]
+        image: String,
+        /// File path inside the container for the disk I/O check
+        #[arg(long, default_value = "/tmp/dip-bench.bin")]
+        path: String,
+        /// Size of the disk I/O sample in MiB
+        #[arg(long, default_value_t = 64)]
+        size_mb: u64,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark bind-mount I/O for the current project root
+    ProjectIo {
+        /// Number of samples per benchmark
+        #[arg(long, short = 'n', default_value_t = 10)]
+        iterations: usize,
+        /// Unmeasured warmup runs before collecting samples
+        #[arg(long, default_value_t = 2)]
+        warmup: usize,
+        /// Test image to run for each runtime
+        #[arg(long, default_value = "busybox:latest")]
+        image: String,
+        /// File path inside the mounted project root
+        #[arg(long, default_value = "/workspace/.dip-bench.bin")]
+        path: String,
+        /// Size of the disk I/O sample in MiB
+        #[arg(long, default_value_t = 64)]
+        size_mb: u64,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmark steady-state exec and disk I/O inside one running test container
+    Steady {
+        /// Number of measured loops inside the running container
+        #[arg(long, short = 'n', default_value_t = 100)]
+        iterations: usize,
+        /// Unmeasured loops before collecting samples
+        #[arg(long, default_value_t = 5)]
+        warmup: usize,
+        /// Test image to run for each runtime
+        #[arg(long, default_value = "busybox:latest")]
+        image: String,
+        /// File path inside the container for the disk I/O check
+        #[arg(long)]
+        path: Option<String>,
+        /// Mount the current project root at /workspace and benchmark that bind mount
+        #[arg(long)]
+        project_io: bool,
+        /// Size of the disk I/O sample in MiB
+        #[arg(long, default_value_t = 64)]
+        size_mb: u64,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 

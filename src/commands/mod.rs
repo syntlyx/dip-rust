@@ -1,11 +1,14 @@
+pub mod bench;
 pub mod build;
 pub mod cert;
 pub mod cleanup;
 pub mod completions;
+pub mod compose_config;
 pub mod ctx;
 pub mod db;
 pub mod doctor;
 pub mod env;
+pub mod explain;
 pub mod health;
 pub mod init;
 pub mod logs;
@@ -28,3 +31,6 @@ pub mod stop;
 pub mod sysinfo;
 pub mod top;
 pub mod update;
+#[cfg(target_os = "macos")]
+pub mod use_runtime;
+pub mod validate;

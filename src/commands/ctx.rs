@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::project::ProjectConfig;
 use crate::runtime::Runtime;
+use crate::utils::log_verbose;
 use crate::utils::output::Output;
 
 /// Shared context for commands that operate on a dip project.
@@ -25,9 +26,11 @@ impl Ctx {
     /// Load project config, build runtime and output in one call.
     pub fn load(verbose: bool, no_color: bool) -> Result<Self> {
         let project = ProjectConfig::load()?;
+        let rt = Runtime::new(project, verbose, no_color);
+        log_verbose(verbose, &format!("  runtime: {}", rt.name()));
         Ok(Self {
             out: Output::new(no_color),
-            rt: Runtime::new(project, verbose, no_color),
+            rt,
         })
     }
 }

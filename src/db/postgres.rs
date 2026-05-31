@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::{DbBackend, DbConfig, exec_dump, exec_import, is_gzipped};
+use crate::runtime::container_exec_command;
 use crate::utils::output::Output;
 
 pub struct PostgresBackend;
@@ -28,6 +29,7 @@ impl DbBackend for PostgresBackend {
 
     fn dump(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         output_path: &Path,
@@ -40,7 +42,8 @@ impl DbBackend for PostgresBackend {
         ));
 
         let gz = is_gzipped(output_path);
-        let pg_env = format!("PGPASSWORD={}", config.password);
+        let env_pairs = vec![("PGPASSWORD".to_string(), config.password.clone())];
+        let runtime = runtime.to_string();
         let cid = container_id.to_string();
         let user = config.user.clone();
         let db = config.db_name.clone();
@@ -48,15 +51,20 @@ impl DbBackend for PostgresBackend {
         exec_dump(
             output_path,
             move || {
-                let mut cmd = std::process::Command::new("docker");
-                if gz {
+                let command_args = if gz {
                     // Pipe requires sh -c; password is in -e (not in the shell string).
-                    let shell = format!("pg_dump -U {user} {db} | gzip");
-                    cmd.args(["exec", "-e", &pg_env, &cid, "sh", "-c", &shell]);
+                    vec![
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "pg_dump -U \"$1\" \"$2\" | gzip".to_string(),
+                        "sh".to_string(),
+                        user,
+                        db,
+                    ]
                 } else {
-                    cmd.args(["exec", "-e", &pg_env, &cid, "pg_dump", "-U", &user, &db]);
-                }
-                cmd
+                    vec!["pg_dump".to_string(), "-U".to_string(), user, db]
+                };
+                container_exec_command(&runtime, &cid, &env_pairs, false, &command_args)
             },
             out,
         )
@@ -64,6 +72,7 @@ impl DbBackend for PostgresBackend {
 
     fn import(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         input_path: &Path,
@@ -74,26 +83,35 @@ impl DbBackend for PostgresBackend {
             config.db_name
         ));
 
-        let pg_env = format!("PGPASSWORD={}", config.password);
+        let env_pairs = vec![("PGPASSWORD".to_string(), config.password.clone())];
+        let runtime = runtime.to_string();
         let cid = container_id.to_string();
         let user = config.user.clone();
         let db = config.db_name.clone();
 
         exec_import(
-            container_id,
             input_path,
-            move |gz, remote| {
-                let mut cmd = std::process::Command::new("docker");
-                if gz {
+            move |gz| {
+                let command_args = if gz {
                     // Pipe requires sh -c; password is in -e (not in the shell string).
-                    let shell = format!("gunzip -c {remote} | psql -U {user} -d {db}");
-                    cmd.args(["exec", "-e", &pg_env, &cid, "sh", "-c", &shell]);
+                    vec![
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "gunzip -c | psql -U \"$1\" -d \"$2\"".to_string(),
+                        "sh".to_string(),
+                        user,
+                        db,
+                    ]
                 } else {
-                    cmd.args([
-                        "exec", "-e", &pg_env, &cid, "psql", "-U", &user, "-d", &db, "-f", remote,
-                    ]);
-                }
-                cmd
+                    vec![
+                        "psql".to_string(),
+                        "-U".to_string(),
+                        user,
+                        "-d".to_string(),
+                        db,
+                    ]
+                };
+                container_exec_command(&runtime, &cid, &env_pairs, true, &command_args)
             },
             out,
         )

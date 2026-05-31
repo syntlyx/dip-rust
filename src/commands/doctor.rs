@@ -100,7 +100,7 @@ fn collect_checks() -> Vec<Check> {
     let cfg = config::load().unwrap_or_default();
 
     vec![
-        check_docker(),
+        check_container_runtime(),
         check_proxy(),
         check_ca_cert(),
         check_server_cert(),
@@ -112,23 +112,21 @@ fn collect_checks() -> Vec<Check> {
     ]
 }
 
-fn check_docker() -> Check {
-    let ok = std::process::Command::new("docker")
-        .args(["info"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if ok {
-        Check::ok("Docker", "daemon is running")
-    } else {
-        Check::fail(
+fn check_container_runtime() -> Check {
+    let runtime = crate::runtime::Runtime::active_name();
+    match crate::runtime::Runtime::check_daemon() {
+        Ok(()) if runtime == "apple" => Check::ok("Apple Container", "service is running"),
+        Ok(()) => Check::ok("Docker", "daemon is running"),
+        Err(_) if runtime == "apple" => Check::fail(
+            "Apple Container",
+            "service is not running",
+            "install Apple Container and run: container system start",
+        ),
+        Err(_) => Check::fail(
             "Docker",
             "daemon is not running",
-            "start Docker Desktop or `sudo systemctl start docker`",
-        )
+            "start Docker Desktop, OrbStack, Colima, or `sudo systemctl start docker`",
+        ),
     }
 }
 

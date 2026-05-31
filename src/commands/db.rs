@@ -20,6 +20,7 @@ pub fn run_dump(
 
     let project = ProjectConfig::load()?;
     let project_name = project.project_name.clone();
+    let runtime_name = Runtime::name_for_project(&project);
 
     // Try label-based detection first
     let labeled = db::detect_by_labels(&project, verbose)?;
@@ -31,8 +32,13 @@ pub fn run_dump(
             svc.backend.name(),
             svc.service_name
         ));
-        svc.backend
-            .dump(&svc.container_id, &svc.config, output_path, &out)
+        svc.backend.dump(
+            runtime_name,
+            &svc.container_id,
+            &svc.config,
+            output_path,
+            &out,
+        )
     } else {
         // Fallback: legacy mode — service named "db", creds from .env
         out.info("No dip.db labels found — using legacy mode (service: db)");
@@ -41,7 +47,7 @@ pub fn run_dump(
         let rt = Runtime::new(project, verbose, no_color);
         let container_id = rt.get_container_id("db")?;
         out.info(&format!("Detected backend: {}", backend.name()));
-        backend.dump(&container_id, &config, output_path, &out)
+        backend.dump(rt.name(), &container_id, &config, output_path, &out)
     };
 
     crate::utils::notify::notify_result(result, &project_name, "db dump")
@@ -62,6 +68,7 @@ pub fn run_import(
 
     let project = ProjectConfig::load()?;
     let project_name = project.project_name.clone();
+    let runtime_name = Runtime::name_for_project(&project);
 
     // Try label-based detection first
     let labeled = db::detect_by_labels(&project, verbose)?;
@@ -73,8 +80,13 @@ pub fn run_import(
             svc.backend.name(),
             svc.service_name
         ));
-        svc.backend
-            .import(&svc.container_id, &svc.config, input_path, &out)
+        svc.backend.import(
+            runtime_name,
+            &svc.container_id,
+            &svc.config,
+            input_path,
+            &out,
+        )
     } else {
         // Fallback: legacy mode — service named "db", creds from .env
         out.info("No dip.db labels found — using legacy mode (service: db)");
@@ -83,7 +95,7 @@ pub fn run_import(
         let rt = Runtime::new(project, verbose, no_color);
         let container_id = rt.get_container_id("db")?;
         out.info(&format!("Detected backend: {}", backend.name()));
-        backend.import(&container_id, &config, input_path, &out)
+        backend.import(rt.name(), &container_id, &config, input_path, &out)
     };
 
     crate::utils::notify::notify_result(result, &project_name, "db import")

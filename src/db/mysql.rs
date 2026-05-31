@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::{DbBackend, DbConfig, exec_dump, exec_import, is_gzipped};
+use crate::runtime::container_exec_command;
 use crate::utils::output::Output;
 
 pub struct MySqlBackend;
@@ -30,6 +31,7 @@ impl DbBackend for MySqlBackend {
 
     fn dump(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         output_path: &Path,
@@ -42,7 +44,8 @@ impl DbBackend for MySqlBackend {
         ));
 
         let gz = is_gzipped(output_path);
-        let mysql_env = format!("MYSQL_PWD={}", config.password);
+        let env_pairs = vec![("MYSQL_PWD".to_string(), config.password.clone())];
+        let runtime = runtime.to_string();
         let cid = container_id.to_string();
         let user = config.user.clone();
         let db = config.db_name.clone();
@@ -50,23 +53,20 @@ impl DbBackend for MySqlBackend {
         exec_dump(
             output_path,
             move || {
-                let mut cmd = std::process::Command::new("docker");
-                if gz {
+                let command_args = if gz {
                     // Pipe requires sh -c; password is in -e (not in the shell string).
-                    let shell = format!("mysqldump -u{user} {db} | gzip");
-                    cmd.args(["exec", "-e", &mysql_env, &cid, "sh", "-c", &shell]);
+                    vec![
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "mysqldump -u\"$1\" \"$2\" | gzip".to_string(),
+                        "sh".to_string(),
+                        user,
+                        db,
+                    ]
                 } else {
-                    cmd.args([
-                        "exec",
-                        "-e",
-                        &mysql_env,
-                        &cid,
-                        "mysqldump",
-                        &format!("-u{user}"),
-                        &db,
-                    ]);
-                }
-                cmd
+                    vec!["mysqldump".to_string(), format!("-u{user}"), db]
+                };
+                container_exec_command(&runtime, &cid, &env_pairs, false, &command_args)
             },
             out,
         )
@@ -74,6 +74,7 @@ impl DbBackend for MySqlBackend {
 
     fn import(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         input_path: &Path,
@@ -84,40 +85,40 @@ impl DbBackend for MySqlBackend {
             config.db_name
         ));
 
-        let mysql_env = format!("MYSQL_PWD={}", config.password);
+        let env_pairs = vec![("MYSQL_PWD".to_string(), config.password.clone())];
+        let runtime = runtime.to_string();
         let cid = container_id.to_string();
         let user = config.user.clone();
         let db = config.db_name.clone();
 
         exec_import(
-            container_id,
             input_path,
-            move |gz, remote| {
-                let mut cmd = std::process::Command::new("docker");
-                if gz {
-                    // Pipe requires sh -c; password is in -e (not in the shell string).
-                    let shell = format!("gunzip -c {remote} | mysql -u{user} {db}");
-                    cmd.args(["exec", "-e", &mysql_env, &cid, "sh", "-c", &shell]);
+            move |gz| {
+                let setup = "SET SESSION autocommit=0; SET SESSION unique_checks=0; \
+                             SET SESSION foreign_key_checks=0; SET SESSION sql_log_bin=0;"
+                    .to_string();
+                let command_args = if gz {
+                    vec![
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "{ printf '%s\\n' \"$3\"; gunzip -c; printf '\\nCOMMIT;\\n'; } | mysql -u\"$1\" \"$2\"".to_string(),
+                        "sh".to_string(),
+                        user,
+                        db,
+                        setup,
+                    ]
                 } else {
-                    // Direct argv with multiple -e statements — no sh -c needed.
-                    cmd.args([
-                        "exec",
-                        "-e",
-                        &mysql_env,
-                        &cid,
-                        "mysql",
-                        &format!("-u{user}"),
-                        &db,
-                        "-e",
-                        "SET SESSION autocommit=0; SET SESSION unique_checks=0; \
-                               SET SESSION foreign_key_checks=0; SET SESSION sql_log_bin=0;",
-                        "-e",
-                        &format!("SOURCE {remote};"),
-                        "-e",
-                        "COMMIT;",
-                    ]);
-                }
-                cmd
+                    vec![
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "{ printf '%s\\n' \"$3\"; cat; printf '\\nCOMMIT;\\n'; } | mysql -u\"$1\" \"$2\"".to_string(),
+                        "sh".to_string(),
+                        user,
+                        db,
+                        setup,
+                    ]
+                };
+                container_exec_command(&runtime, &cid, &env_pairs, true, &command_args)
             },
             out,
         )

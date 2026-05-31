@@ -257,7 +257,7 @@ fn read_project_name(dip_dir: &Path) -> Option<String> {
     None
 }
 
-// ─── Docker status ────────────────────────────────────────────────────────────
+// ─── runtime status ───────────────────────────────────────────────────────────
 
 fn check_status(project: &DipProject) -> ProjectStatus {
     let running = running_container_count(&project.name);
@@ -271,22 +271,7 @@ fn check_status(project: &DipProject) -> ProjectStatus {
 }
 
 fn running_container_count(project_name: &str) -> usize {
-    let Ok(output) = std::process::Command::new("docker")
-        .args([
-            "ps",
-            "-q",
-            "--filter",
-            &format!("label=com.docker.compose.project={project_name}"),
-        ])
-        .output()
-    else {
-        return 0;
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .count()
+    crate::runtime::active_backend().running_count_by_project(project_name)
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
 
 use crate::db::{DbConfig, detect_by_labels};
 use crate::project::ProjectConfig;
+use crate::runtime::Runtime;
 use crate::utils::output::{Output, make_spinner};
 
 const CHUNK_SIZE: usize = 500;
@@ -82,8 +83,9 @@ pub fn run_migrate(
 
     let from_type = from_svc.backend.name().to_string();
     let to_type = to_svc.backend.name().to_string();
-    let from_ip = get_container_ip(&from_svc.container_id)?;
-    let to_ip = get_container_ip(&to_svc.container_id)?;
+    let rt_handle = Runtime::new(project.clone(), verbose, no_color);
+    let from_ip = rt_handle.container_ip(&from_svc.container_id)?;
+    let to_ip = rt_handle.container_ip(&to_svc.container_id)?;
     let from_db = from_svc.config.db_name.clone();
 
     let tables_filter: Option<Vec<String>> =
@@ -161,7 +163,7 @@ async fn migrate_mysql_to_pg(
         if verbose {
             eprintln!("  DDL: {ddl}");
         }
-        sqlx::query(&ddl)
+        sqlx::query(audited_sql(&ddl))
             .execute(&dst)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create table \"{table}\": {e}"))?;
@@ -184,7 +186,7 @@ async fn migrate_mysql_to_pg(
     for (table, _, _, idxs, _) in &schemas {
         for idx in idxs {
             let ddl = build_pg_index(table, idx);
-            if let Err(e) = sqlx::query(&ddl).execute(&dst).await
+            if let Err(e) = sqlx::query(audited_sql(&ddl)).execute(&dst).await
                 && verbose
             {
                 eprintln!("  [warn] index on {table}: {e}");
@@ -196,13 +198,16 @@ async fn migrate_mysql_to_pg(
     for (table, cols, _, _, _) in &schemas {
         for col in cols {
             if col.is_auto_increment {
+                let table_regclass = pg_string_literal(&pg_ident(table));
+                let col_name = pg_string_literal(&col.name);
+                let col_ident = pg_ident(&col.name);
+                let table_ident = pg_ident(table);
                 let sql = format!(
                     "SELECT setval(\
-                       pg_get_serial_sequence('\"{table}\"', '{col}'), \
-                       COALESCE(MAX(\"{col}\"), 1)) FROM \"{table}\"",
-                    col = col.name
+                       pg_get_serial_sequence({table_regclass}, {col_name}), \
+                       COALESCE(MAX({col_ident}), 1)) FROM {table_ident}"
                 );
-                sqlx::query(&sql).execute(&dst).await.ok();
+                sqlx::query(audited_sql(&sql)).execute(&dst).await.ok();
             }
         }
     }
@@ -211,7 +216,7 @@ async fn migrate_mysql_to_pg(
     for (table, _, _, _, fks) in &schemas {
         for fk in fks {
             let ddl = build_pg_fk(table, fk);
-            if let Err(e) = sqlx::query(&ddl).execute(&dst).await
+            if let Err(e) = sqlx::query(audited_sql(&ddl)).execute(&dst).await
                 && verbose
             {
                 eprintln!("  [warn] FK on {table}: {e}");
@@ -258,7 +263,7 @@ async fn migrate_pg_to_mysql(
         if verbose {
             eprintln!("  DDL: {ddl}");
         }
-        sqlx::query(&ddl)
+        sqlx::query(audited_sql(&ddl))
             .execute(&dst)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create table `{table}`: {e}"))?;
@@ -658,19 +663,24 @@ fn build_pg_create_table(table: &str, cols: &[MysqlCol], pk: &[String]) -> Strin
     for col in cols {
         let pg_type = mysql_type_to_pg(col);
         let null_part = if col.is_nullable { "" } else { " NOT NULL" };
-        lines.push(format!("  \"{}\" {}{}", col.name, pg_type, null_part));
+        lines.push(format!(
+            "  {} {}{}",
+            pg_ident(&col.name),
+            pg_type,
+            null_part
+        ));
     }
     if !pk.is_empty() {
         let pk_cols = pk
             .iter()
-            .map(|c| format!("\"{}\"", c))
+            .map(|c| pg_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("  PRIMARY KEY ({pk_cols})"));
     }
     format!(
-        "CREATE TABLE IF NOT EXISTS \"{}\" (\n{}\n)",
-        table,
+        "CREATE TABLE IF NOT EXISTS {} (\n{}\n)",
+        pg_ident(table),
         lines.join(",\n")
     )
 }
@@ -680,19 +690,24 @@ fn build_mysql_create_table(table: &str, cols: &[PgCol], pk: &[String]) -> Strin
     for col in cols {
         let mysql_type = pg_type_to_mysql(col);
         let null_part = if col.is_nullable { "" } else { " NOT NULL" };
-        lines.push(format!("  `{}` {}{}", col.name, mysql_type, null_part));
+        lines.push(format!(
+            "  {} {}{}",
+            mysql_ident(&col.name),
+            mysql_type,
+            null_part
+        ));
     }
     if !pk.is_empty() {
         let pk_cols = pk
             .iter()
-            .map(|c| format!("`{}`", c))
+            .map(|c| mysql_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("  PRIMARY KEY ({pk_cols})"));
     }
     format!(
-        "CREATE TABLE IF NOT EXISTS `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-        table,
+        "CREATE TABLE IF NOT EXISTS {} (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        mysql_ident(table),
         lines.join(",\n")
     )
 }
@@ -702,20 +717,27 @@ fn build_pg_index(table: &str, idx: &MysqlIdx) -> String {
     let cols = idx
         .columns
         .iter()
-        .map(|c| format!("\"{}\"", c))
+        .map(|c| pg_ident(c))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "CREATE {}INDEX IF NOT EXISTS \"{}\" ON \"{}\" ({})",
-        unique, idx.name, table, cols
+        "CREATE {}INDEX IF NOT EXISTS {} ON {} ({})",
+        unique,
+        pg_ident(&idx.name),
+        pg_ident(table),
+        cols
     )
 }
 
 fn build_pg_fk(table: &str, fk: &MysqlFk) -> String {
     format!(
-        "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" \
-         FOREIGN KEY (\"{}\") REFERENCES \"{}\" (\"{}\")",
-        table, fk.name, fk.column, fk.ref_table, fk.ref_column
+        "ALTER TABLE {} ADD CONSTRAINT {} \
+         FOREIGN KEY ({}) REFERENCES {} ({})",
+        pg_ident(table),
+        pg_ident(&fk.name),
+        pg_ident(&fk.column),
+        pg_ident(&fk.ref_table),
+        pg_ident(&fk.ref_column)
     )
 }
 
@@ -729,22 +751,23 @@ async fn transfer_mysql_to_pg(
     pb: &ProgressBar,
 ) -> Result<u64> {
     // Clear target table (CREATE TABLE IF NOT EXISTS may leave data from previous runs)
-    sqlx::query(&format!(
-        "TRUNCATE TABLE \"{}\" RESTART IDENTITY CASCADE",
-        table
-    ))
-    .execute(dst)
-    .await
-    .ok();
+    let truncate_sql = format!(
+        "TRUNCATE TABLE {} RESTART IDENTITY CASCADE",
+        pg_ident(table)
+    );
+    sqlx::query(audited_sql(&truncate_sql))
+        .execute(dst)
+        .await
+        .ok();
 
     let col_list = cols
         .iter()
-        .map(|c| format!("\"{}\"", c.name))
+        .map(|c| pg_ident(&c.name))
         .collect::<Vec<_>>()
         .join(", ");
 
-    let select_sql = format!("SELECT * FROM `{}`", table);
-    let mut stream = sqlx::query(&select_sql).fetch(src);
+    let select_sql = format!("SELECT * FROM {}", mysql_ident(table));
+    let mut stream = sqlx::query(audited_sql(&select_sql)).fetch(src);
     let mut batch: Vec<Vec<CellValue>> = Vec::with_capacity(CHUNK_SIZE);
     let mut total = 0u64;
 
@@ -794,12 +817,12 @@ async fn insert_pg_batch(
         })
         .collect();
     let sql = format!(
-        "INSERT INTO \"{}\" ({}) VALUES {}",
-        table,
+        "INSERT INTO {} ({}) VALUES {}",
+        pg_ident(table),
         col_list,
         values.join(", ")
     );
-    sqlx::query(&sql)
+    sqlx::query(audited_sql(&sql))
         .execute(dst)
         .await
         .map_err(|e| anyhow::anyhow!("INSERT into \"{table}\" failed: {e}"))?;
@@ -819,7 +842,8 @@ async fn transfer_pg_to_mysql(
         .execute(dst)
         .await
         .ok();
-    sqlx::query(&format!("TRUNCATE TABLE `{}`", table))
+    let truncate_sql = format!("TRUNCATE TABLE {}", mysql_ident(table));
+    sqlx::query(audited_sql(&truncate_sql))
         .execute(dst)
         .await
         .ok();
@@ -830,12 +854,12 @@ async fn transfer_pg_to_mysql(
 
     let col_list = cols
         .iter()
-        .map(|c| format!("`{}`", c.name))
+        .map(|c| mysql_ident(&c.name))
         .collect::<Vec<_>>()
         .join(", ");
 
-    let select_sql = format!("SELECT * FROM \"{}\"", table);
-    let mut stream = sqlx::query(&select_sql).fetch(src);
+    let select_sql = format!("SELECT * FROM {}", pg_ident(table));
+    let mut stream = sqlx::query(audited_sql(&select_sql)).fetch(src);
     let mut batch: Vec<Vec<CellValue>> = Vec::with_capacity(CHUNK_SIZE);
     let mut total = 0u64;
 
@@ -885,12 +909,12 @@ async fn insert_mysql_batch(
         })
         .collect();
     let sql = format!(
-        "INSERT INTO `{}` ({}) VALUES {}",
-        table,
+        "INSERT INTO {} ({}) VALUES {}",
+        mysql_ident(table),
         col_list,
         values.join(", ")
     );
-    sqlx::query(&sql)
+    sqlx::query(audited_sql(&sql))
         .execute(dst)
         .await
         .map_err(|e| anyhow::anyhow!("INSERT into `{table}` failed: {e}"))?;
@@ -1119,12 +1143,12 @@ fn cell_to_pg_literal(val: &CellValue) -> String {
             }
         }
         CellValue::Decimal(d) => d.to_string(),
-        CellValue::Text(s) => format!("'{}'", s.replace('\'', "''")),
+        CellValue::Text(s) => pg_string_literal(s),
         CellValue::Bytes(b) => format!("'\\x{}'", hex_encode(b)),
         CellValue::Date(d) => format!("'{}'", d.format("%Y-%m-%d")),
         CellValue::Time(t) => format!("'{}'", t.format("%H:%M:%S%.f")),
         CellValue::DateTime(dt) => format!("'{}'", dt.format("%Y-%m-%d %H:%M:%S%.f")),
-        CellValue::Json(j) => format!("'{}'", j.to_string().replace('\'', "''")),
+        CellValue::Json(j) => pg_string_literal(&j.to_string()),
     }
 }
 
@@ -1146,23 +1170,6 @@ fn cell_to_mysql_literal(val: &CellValue) -> String {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
-
-fn get_container_ip(container_id: &str) -> Result<String> {
-    let out = std::process::Command::new("docker")
-        .args(["inspect", container_id])
-        .output()?;
-    if !out.status.success() {
-        anyhow::bail!("docker inspect failed for container {container_id}");
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    json[0]["NetworkSettings"]["Networks"]
-        .as_object()
-        .and_then(|nets| nets.values().next())
-        .and_then(|net| net["IPAddress"].as_str())
-        .filter(|ip| !ip.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow::anyhow!("Could not find IP for container {container_id}"))
-}
 
 async fn connect_mysql(config: &DbConfig, ip: &str) -> Result<MySqlPool> {
     let opts = MySqlConnectOptions::new()
@@ -1202,6 +1209,22 @@ fn fmt_num(n: u64) -> String {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn audited_sql(sql: &str) -> sqlx::AssertSqlSafe<&str> {
+    sqlx::AssertSqlSafe(sql)
+}
+
+fn pg_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn pg_string_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+fn mysql_ident(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
 }
 
 fn mysql_escape_str(s: &str) -> String {
@@ -1255,6 +1278,13 @@ mod tests {
         assert_eq!(mysql_escape_str("cr\rend"), "cr\\rend");
         assert_eq!(mysql_escape_str("nul\0byte"), "nul\\0byte");
         assert_eq!(mysql_escape_str("plain"), "plain");
+    }
+
+    #[test]
+    fn dynamic_sql_helpers_escape_identifiers_and_literals() {
+        assert_eq!(pg_ident("user\"data"), "\"user\"\"data\"");
+        assert_eq!(pg_string_literal("it's"), "'it''s'");
+        assert_eq!(mysql_ident("user`data"), "`user``data`");
     }
 
     // ── mysql_type_to_pg ──────────────────────────────────────────────────────

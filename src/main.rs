@@ -13,7 +13,7 @@ mod tunnel;
 mod utils;
 
 use clap::Parser;
-use cli::{Cli, Commands, DbCommands, ProxyCommands};
+use cli::{BenchCommands, Cli, Commands, DbCommands, EnvCommands, ExplainCommands, ProxyCommands};
 use colored::Colorize;
 
 fn main() {
@@ -24,7 +24,58 @@ fn main() {
     let result = match cli.command {
         Commands::Init { template } => commands::init::run(template.as_deref(), nc),
         Commands::Ls { root } => commands::ls::run(root, nc),
-        Commands::Env => commands::env::run(nc),
+        Commands::Env { command } => match command {
+            Some(EnvCommands::Diff { show_values }) => commands::env::run_diff(show_values, nc),
+            None => commands::env::run(nc),
+        },
+        Commands::Validate { fix } => commands::validate::run(fix, v, nc),
+        Commands::Explain(sub) => match sub {
+            ExplainCommands::Build { service } => commands::explain::run_build(service, v, nc),
+        },
+        Commands::Bench(sub) => match sub {
+            BenchCommands::Runtime {
+                iterations,
+                warmup,
+                image,
+                path,
+                size_mb,
+                json,
+            } => commands::bench::run_runtime(iterations, warmup, image, path, size_mb, json, nc),
+            BenchCommands::ProjectIo {
+                iterations,
+                warmup,
+                image,
+                path,
+                size_mb,
+                json,
+            } => {
+                commands::bench::run_project_io(iterations, warmup, image, path, size_mb, json, nc)
+            }
+            BenchCommands::Steady {
+                iterations,
+                warmup,
+                image,
+                path,
+                project_io,
+                size_mb,
+                json,
+            } => commands::bench::run_steady(commands::bench::SteadyBenchOptions {
+                iterations,
+                warmup,
+                image,
+                path,
+                project_io,
+                size_mb,
+                json,
+                no_color: nc,
+            }),
+        },
+        #[cfg(target_os = "macos")]
+        Commands::Use {
+            runtime,
+            project,
+            global,
+        } => commands::use_runtime::run(runtime, project, global, nc),
         Commands::Open { service } => commands::open::run(service.as_deref(), nc),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Root => commands::root::run(),

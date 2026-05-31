@@ -6,6 +6,7 @@ use colored::Colorize;
 use crate::project::ProjectConfig;
 use crate::proxy::certs;
 use crate::proxy::config::{self, Route};
+use crate::runtime::Runtime;
 use crate::utils::output::Output;
 
 use super::daemon::{daemon_pid, sighup_daemon, spawn_daemon};
@@ -212,101 +213,34 @@ pub fn sync_from_project(project: &ProjectConfig, no_color: bool) -> Result<()> 
     Ok(())
 }
 
-// ─── Docker label discovery ───────────────────────────────────────────────────
+// ─── runtime label discovery ──────────────────────────────────────────────────
 
 /// Collect domain names for all containers in this project (running or stopped).
 fn discover_project_domains(project: &ProjectConfig) -> Result<std::collections::HashSet<String>> {
-    let compose = project.compose_file.to_str().unwrap_or("");
-    let ps = std::process::Command::new("docker")
-        .args(["compose", "-f", compose, "ps", "-q", "-a"])
-        .envs(project.get_env())
-        .output()?;
-
-    let ids: Vec<String> = String::from_utf8_lossy(&ps.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(String::from)
-        .collect();
-
-    if ids.is_empty() {
-        return Ok(std::collections::HashSet::new());
-    }
-
-    let mut args = vec!["inspect".to_string()];
-    args.extend(ids);
-    let inspect = std::process::Command::new("docker").args(&args).output()?;
-
-    if !inspect.status.success() {
-        return Ok(std::collections::HashSet::new());
-    }
-
-    let json: serde_json::Value =
-        serde_json::from_slice(&inspect.stdout).unwrap_or(serde_json::Value::Array(vec![]));
-
+    let rt = Runtime::new(project.clone(), false, true);
     let mut domains = std::collections::HashSet::new();
-    for container in json.as_array().into_iter().flatten() {
-        for (domain, _port) in parse_host_labels(&container["Config"]["Labels"]) {
+    for container in rt.project_containers(true)? {
+        for (domain, _port) in parse_host_labels(&container.labels) {
             domains.insert(domain);
         }
     }
-
     Ok(domains)
 }
 
 /// Read `dip.host*` labels from running containers and return proxy routes.
 fn discover_routes(project: &ProjectConfig) -> Result<Vec<Route>> {
-    let compose = project.compose_file.to_str().unwrap_or("");
-
-    let ps = std::process::Command::new("docker")
-        .args(["compose", "-f", compose, "ps", "-q"])
-        .envs(project.get_env())
-        .output()?;
-
-    let ids: Vec<String> = String::from_utf8_lossy(&ps.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(String::from)
-        .collect();
-
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let mut args = vec!["inspect".to_string()];
-    args.extend(ids);
-    let inspect = std::process::Command::new("docker").args(&args).output()?;
-
-    if !inspect.status.success() {
-        anyhow::bail!(
-            "docker inspect failed: {}",
-            String::from_utf8_lossy(&inspect.stderr).trim()
-        );
-    }
-
-    let json: serde_json::Value = serde_json::from_slice(&inspect.stdout)
-        .map_err(|e| anyhow::anyhow!("docker inspect JSON parse error: {e}"))?;
-
+    let rt = Runtime::new(project.clone(), false, true);
     let mut routes = Vec::new();
-    for container in json.as_array().into_iter().flatten() {
-        let host_entries = parse_host_labels(&container["Config"]["Labels"]);
+    for container in rt.project_containers(false)? {
+        let host_entries = parse_host_labels(&container.labels);
         if host_entries.is_empty() {
             continue;
         }
 
-        let ip = container["NetworkSettings"]["Networks"]
-            .as_object()
-            .and_then(|nets| nets.values().next())
-            .and_then(|net| net["IPAddress"].as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        if ip.is_empty() {
+        let Some(ip) = container.ip else {
             eprintln!("dip-proxy: no IP for container — skipping");
             continue;
-        }
+        };
 
         for (domain, port) in host_entries {
             routes.push(Route {

@@ -6,14 +6,13 @@ pub use mysql::MySqlBackend;
 pub use postgres::PostgresBackend;
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::Path;
-use std::process::Command;
 
 use anyhow::Result;
-use serde_json::Value;
 
 use crate::project::ProjectConfig;
-use crate::utils::env;
+use crate::runtime::Runtime;
 use crate::utils::output::Output;
 
 // ─── config ──────────────────────────────────────────────────────────────────
@@ -37,6 +36,7 @@ pub trait DbBackend {
     }
     fn dump(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         output_path: &Path,
@@ -44,6 +44,7 @@ pub trait DbBackend {
     ) -> Result<()>;
     fn import(
         &self,
+        runtime: &str,
         container_id: &str,
         config: &DbConfig,
         input_path: &Path,
@@ -61,123 +62,9 @@ pub struct DbService {
 }
 
 /// Inspect all running compose containers and return those tagged with `dip.db` label.
-/// Credentials are read directly from the container's environment (docker inspect), not from .env.
+/// Credentials are read directly from the container's environment, not from .env.
 pub fn detect_by_labels(project: &ProjectConfig, verbose: bool) -> Result<Vec<DbService>> {
-    let compose_file = project.compose_file.to_string_lossy().into_owned();
-
-    // Get IDs of all running compose services
-    let ps_out = Command::new("docker")
-        .args(["compose", "-f", &compose_file, "ps", "-q"])
-        .envs(project.get_env())
-        .output()?;
-
-    let ids: Vec<&str> = std::str::from_utf8(&ps_out.stdout)?
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    crate::utils::log_verbose(verbose, &format!("  docker inspect {}", ids.join(" ")));
-
-    let mut inspect_args = vec!["inspect"];
-    inspect_args.extend_from_slice(&ids);
-
-    let inspect_out = Command::new("docker").args(&inspect_args).output()?;
-    if !inspect_out.status.success() {
-        return Ok(vec![]);
-    }
-
-    let containers: Value = serde_json::from_slice(&inspect_out.stdout)?;
-    let containers = match containers.as_array() {
-        Some(a) => a,
-        None => return Ok(vec![]),
-    };
-
-    let mut services = vec![];
-
-    for c in containers {
-        let labels = &c["Config"]["Labels"];
-        let db_type = match labels["dip.db"].as_str() {
-            Some(t) => t,
-            None => continue,
-        };
-
-        let container_id = match c["Id"].as_str() {
-            Some(id) => id[..12].to_string(),
-            None => continue,
-        };
-
-        // Service name from compose label, fall back to container Name
-        let service_name = labels["com.docker.compose.service"]
-            .as_str()
-            .unwrap_or_else(|| c["Name"].as_str().unwrap_or("db").trim_start_matches('/'))
-            .to_string();
-
-        // Parse env array ["KEY=VALUE", ...] into a map
-        let env = env::parse_env_json_array(&c["Config"]["Env"]);
-
-        let (backend, config) = match db_type {
-            "mysql" => {
-                let db_name = env.get("MYSQL_DATABASE").cloned().unwrap_or_default();
-                let password = env.get("MYSQL_ROOT_PASSWORD").cloned().unwrap_or_default();
-                if db_name.is_empty() || password.is_empty() {
-                    continue; // label present but creds missing — skip
-                }
-                let b: Box<dyn DbBackend> = Box::new(MySqlBackend);
-                (
-                    b,
-                    DbConfig {
-                        db_name,
-                        password,
-                        user: "root".to_string(),
-                    },
-                )
-            }
-            "postgres" => {
-                let db_name = env
-                    .get("POSTGRES_DB")
-                    .or_else(|| env.get("PGDATABASE"))
-                    .cloned()
-                    .unwrap_or_default();
-                let password = env
-                    .get("POSTGRES_PASSWORD")
-                    .or_else(|| env.get("PGPASSWORD"))
-                    .cloned()
-                    .unwrap_or_default();
-                if db_name.is_empty() || password.is_empty() {
-                    continue;
-                }
-                let user = env
-                    .get("POSTGRES_USER")
-                    .or_else(|| env.get("PGUSER"))
-                    .cloned()
-                    .unwrap_or_else(|| "postgres".to_string());
-                let b: Box<dyn DbBackend> = Box::new(PostgresBackend);
-                (
-                    b,
-                    DbConfig {
-                        db_name,
-                        password,
-                        user,
-                    },
-                )
-            }
-            _ => continue,
-        };
-
-        services.push(DbService {
-            service_name,
-            container_id,
-            backend,
-            config,
-        });
-    }
-
-    Ok(services)
+    Runtime::new(project.clone(), verbose, true).db_services()
 }
 
 // ─── shared execution helpers ────────────────────────────────────────────────
@@ -206,22 +93,21 @@ pub fn exec_dump(
 
 /// Copy dump file to container, run import command, clean up temp file.
 ///
-/// `build_cmd` receives `(gz: bool, remote: &str)` — the compression flag and the
-/// path of the temp file inside the container — and returns a configured `Command`.
+/// `build_cmd` receives the compression flag and returns a command that reads
+/// SQL from stdin. This avoids runtime-specific `docker cp` / `container cp`
+/// behavior and works for both Docker and Apple Container.
 pub fn exec_import(
-    container_id: &str,
     input_path: &Path,
-    build_cmd: impl FnOnce(bool, &str) -> std::process::Command,
+    build_cmd: impl FnOnce(bool) -> std::process::Command,
     out: &Output,
 ) -> Result<()> {
     let gz = is_gzipped(input_path);
-    let remote = remote_tmp_path(gz);
+    let input = File::open(input_path)
+        .map_err(|e| anyhow::anyhow!("Cannot open import file {}: {e}", input_path.display()))?;
 
-    out.info("Copying dump file to container...");
-    docker_cp_to_container(container_id, input_path, remote)?;
+    out.info("Streaming dump file into container...");
 
-    let import_status = build_cmd(gz, remote).status()?;
-    docker_rm_remote(container_id, remote);
+    let import_status = build_cmd(gz).stdin(input).status()?;
 
     if import_status.success() {
         out.success("Database imported successfully");
@@ -237,52 +123,11 @@ pub fn is_gzipped(path: &Path) -> bool {
     path.to_str().map(|s| s.ends_with(".gz")).unwrap_or(false)
 }
 
-/// Returns the remote tmp path to use when copying a dump into a container.
-pub fn remote_tmp_path(gz: bool) -> &'static str {
-    if gz {
-        "/tmp/import.sql.gz"
-    } else {
-        "/tmp/import.sql"
-    }
-}
-
-// ─── shared docker helpers ────────────────────────────────────────────────────
-
 /// Create the local output file for a dump, returning an error with the path
 /// in the message if it fails.
 pub fn create_output_file(path: &Path) -> Result<std::fs::File> {
     std::fs::File::create(path)
         .map_err(|e| anyhow::anyhow!("Cannot create output file {}: {e}", path.display()))
-}
-
-/// Copy a local file into a container via `docker cp`.
-pub fn docker_cp_to_container(container_id: &str, local: &Path, remote: &str) -> Result<()> {
-    let status = std::process::Command::new("docker")
-        .args([
-            "cp",
-            local.to_str().unwrap_or_default(),
-            &format!("{container_id}:{remote}"),
-        ])
-        .status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!("Failed to copy dump file to container")
-    }
-}
-
-/// Remove a file inside a container (best-effort cleanup after import).
-pub fn docker_rm_remote(container_id: &str, remote: &str) {
-    let ok = std::process::Command::new("docker")
-        .args(["exec", container_id, "rm", "-f", remote])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok {
-        eprintln!(
-            "  [warn] could not remove temp file {remote} from container — remove it manually if needed"
-        );
-    }
 }
 
 // ─── legacy env-based detection ──────────────────────────────────────────────
