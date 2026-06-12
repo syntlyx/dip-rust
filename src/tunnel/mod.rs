@@ -1,163 +1,131 @@
 //! Built-in SSH reverse tunnel for `dip share`.
 //!
-//! Connects to localhost.run via pure-Rust SSH (russh) — no cloudflared,
-//! no system ssh binary. Registers a reverse port-forward and proxies each
-//! incoming internet connection to a local TCP port.
+//! Spawns the system OpenSSH client (present out of the box on macOS/Linux)
+//! to connect to localhost.run with a reverse port-forward. OpenSSH handles
+//! the forwarding and proxying itself — we only watch its output for the
+//! public URL assigned by the service.
 
+use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::Result;
-use russh::client::{self, Msg};
-use russh::keys::PublicKey;
-use russh::{Channel, ChannelMsg};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 
 use crate::utils::output::Output;
 
-const SSH_HOST: &str = "ssh.localhost.run";
-const SSH_PORT: u16 = 22;
+const SSH_HOST: &str = "localhost.run";
 const SSH_USER: &str = "nokey";
 
 // ─── public entry point ───────────────────────────────────────────────────────
 
 pub async fn run_tunnel(upstream: &str, out: &Output) -> Result<()> {
-    let config = Arc::new(client::Config::default());
-    let handler = TunnelHandler {
-        upstream: upstream.to_string(),
-    };
+    let mut child = spawn_ssh(upstream)?;
 
-    let mut session = client::connect(config, (SSH_HOST, SSH_PORT), handler)
-        .await
-        .map_err(|e| anyhow::anyhow!("Cannot connect to {SSH_HOST}: {e}"))?;
+    let stdout = child.stdout.take().expect("ssh stdout is piped");
+    let stderr = child.stderr.take().expect("ssh stderr is piped");
 
-    let auth = session
-        .authenticate_none(SSH_USER)
-        .await
-        .map_err(|e| anyhow::anyhow!("SSH auth failed: {e}"))?;
+    // Capture stderr for error reporting; surface lines that aren't known
+    // ssh noise (e.g. the host-key warning produced by accept-new).
+    let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let captured_writer = Arc::clone(&captured);
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if !is_ssh_noise(&line) && !line.trim().is_empty() {
+                eprintln!("  {line}");
+            }
+            captured_writer.lock().await.push(line);
+        }
+    });
 
-    if !auth.success() {
-        anyhow::bail!("localhost.run rejected the connection (none-auth not accepted)");
+    // Read stdout line by line, printing public URLs as they arrive,
+    // while also waiting for Ctrl+C.
+    let mut url_seen = false;
+    let mut lines = BufReader::new(stdout).lines();
+    loop {
+        tokio::select! {
+            line = lines.next_line() => match line {
+                Ok(Some(line)) => {
+                    if let Some(url) = extract_url(&line) {
+                        out.success(&format!("  Public URL: {url}"));
+                        url_seen = true;
+                    } else if !line.trim().is_empty() {
+                        println!("  {line}");
+                    }
+                }
+                // EOF or read error — ssh exited or the connection dropped
+                _ => break,
+            },
+            result = tokio::signal::ctrl_c() => {
+                result.map_err(|e| anyhow::anyhow!("Signal error: {e}"))?;
+                // The terminal delivers SIGINT to ssh too (same process group),
+                // but kill explicitly so we never leave a child behind.
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                stderr_task.abort();
+                out.info("Disconnected");
+                return Ok(());
+            }
+        }
     }
 
-    // Ask the server to forward remote port 80 → us → local_port.
-    // Must be called before opening a session channel so the server is ready
-    // to accept forwarded connections when it sends us the public URL.
-    session.tcpip_forward("localhost", 80).await?;
+    // ssh exited on its own — reap it and finish collecting stderr.
+    let status = child.wait().await?;
+    let _ = stderr_task.await;
 
-    // Open a session channel and request a shell — localhost.run only sends
-    // the assigned public URL after the session is active (shell running).
-    let mut ch = session.channel_open_session().await?;
-    ch.request_shell(false).await?;
-
-    // Read the session channel concurrently with waiting for Ctrl+C.
-    tokio::select! {
-        _ = drain_session_channel(&mut ch, out) => {
-            // Session channel closed by server (unusual but possible)
-        }
-        result = tokio::signal::ctrl_c() => {
-            result.map_err(|e| anyhow::anyhow!("Signal error: {e}"))?;
-        }
+    if !url_seen {
+        let stderr_output = captured.lock().await.join("\n");
+        anyhow::bail!(
+            "ssh exited before a public URL was received ({status}){}",
+            if stderr_output.is_empty() {
+                String::new()
+            } else {
+                format!("\n{stderr_output}")
+            }
+        );
     }
 
-    out.info("Disconnected");
-    let _ = session
-        .disconnect(russh::Disconnect::ByApplication, "", "en")
-        .await;
-
+    out.info("Disconnected (tunnel closed by remote)");
     Ok(())
 }
 
-// ─── session channel reader ───────────────────────────────────────────────────
+// ─── ssh process ──────────────────────────────────────────────────────────────
 
-/// Read the SSH session channel until it closes, printing public URLs as they arrive.
-async fn drain_session_channel(ch: &mut Channel<Msg>, out: &Output) {
-    loop {
-        match ch.wait().await {
-            Some(ChannelMsg::Data { data }) => {
-                let text = String::from_utf8_lossy(&data);
-                for line in text.lines() {
-                    if let Some(url) = extract_url(line) {
-                        out.success(&format!("  Public URL: {url}"));
-                    } else if !line.trim().is_empty() {
-                        println!("  {line}");
-                    }
-                }
+/// Spawn the system OpenSSH client with a reverse forward of remote port 80
+/// to the local upstream (`host:port`).
+fn spawn_ssh(upstream: &str) -> Result<Child> {
+    Command::new("ssh")
+        .arg("-T") // no PTY — we only read the service banner
+        .args(["-o", "StrictHostKeyChecking=accept-new"])
+        .args(["-o", "ServerAliveInterval=30"])
+        .args(["-o", "ExitOnForwardFailure=yes"])
+        .args(["-R", &format!("80:{upstream}")])
+        .arg(format!("{SSH_USER}@{SSH_HOST}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!("ssh client not found — install OpenSSH client")
+            } else {
+                anyhow::anyhow!("Cannot start ssh: {e}")
             }
-            Some(ChannelMsg::ExtendedData { data, .. }) => {
-                // Stderr from the server (some messages come here)
-                let text = String::from_utf8_lossy(&data);
-                for line in text.lines() {
-                    if let Some(url) = extract_url(line) {
-                        out.success(&format!("  Public URL: {url}"));
-                    } else if !line.trim().is_empty() {
-                        println!("  {line}");
-                    }
-                }
-            }
-            None => break,
-            _ => {}
-        }
-    }
+        })
+}
+
+/// Known noisy ssh messages that shouldn't pollute the tunnel output.
+fn is_ssh_noise(line: &str) -> bool {
+    // Printed by StrictHostKeyChecking=accept-new on first connect
+    line.starts_with("Warning: Permanently added")
 }
 
 fn extract_url(line: &str) -> Option<&str> {
     line.split_whitespace()
         .find(|w| w.starts_with("https://") || w.starts_with("http://"))
-}
-
-// ─── russh client handler ────────────────────────────────────────────────────
-
-struct TunnelHandler {
-    upstream: String,
-}
-
-impl client::Handler for TunnelHandler {
-    type Error = anyhow::Error;
-
-    // Accept any server key — we're connecting to a public tunnel service,
-    // not a machine where TOFU/pinning matters for security.
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-
-    /// Called when the SSH server opens a forwarded-tcpip channel, i.e. an
-    /// internet request arrived at localhost.run and is being forwarded to us.
-    async fn server_channel_open_forwarded_tcpip(
-        &mut self,
-        channel: Channel<Msg>,
-        _connected_address: &str,
-        _connected_port: u32,
-        _originator_address: &str,
-        _originator_port: u32,
-        _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        let upstream = self.upstream.clone();
-        tokio::spawn(async move {
-            if let Err(e) = proxy_channel(channel, &upstream).await {
-                eprintln!("  [tunnel] proxy error: {e}");
-            }
-        });
-        Ok(())
-    }
-}
-
-// ─── per-connection proxy ────────────────────────────────────────────────────
-
-/// Bidirectionally copy between an SSH forwarded-tcpip channel and the upstream TCP socket.
-async fn proxy_channel(channel: Channel<Msg>, upstream: &str) -> Result<()> {
-    let mut stream = TcpStream::connect(upstream)
-        .await
-        .map_err(|e| anyhow::anyhow!("Cannot connect to {upstream}: {e}"))?;
-
-    let mut channel_stream = channel.into_stream();
-    tokio::io::copy_bidirectional(&mut channel_stream, &mut stream)
-        .await
-        .map_err(|e| anyhow::anyhow!("Proxy IO error: {e}"))?;
-
-    Ok(())
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────

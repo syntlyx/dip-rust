@@ -1,12 +1,11 @@
-use colored::{Color, Colorize};
-use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+use crate::utils::spinner::Spinner;
+use crate::utils::style::{Color, Stylize};
 
 pub struct Output;
 
 impl Output {
     pub fn new(no_color: bool) -> Self {
-        colored::control::set_override(!no_color);
+        crate::utils::style::set_override(!no_color);
         Self
     }
 
@@ -46,25 +45,17 @@ impl Output {
         println!("{sep}");
     }
 
-    pub fn spinner(&self, message: &str) -> ProgressBar {
+    pub fn spinner(&self, message: &str) -> Spinner {
         make_spinner(message)
     }
 }
 
-/// Create a spinner progress bar.
+/// Create a spinner.
 ///
-/// Color is controlled by the global `colored` override set in `Output::new` —
+/// Color is controlled by the global `style` override set in `Output::new` —
 /// no need to pass `no_color` here separately.
-pub fn make_spinner(message: &str) -> ProgressBar {
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .expect("spinner template is valid"),
-    );
-    pb.set_message(message.to_string());
-    pb.enable_steady_tick(Duration::from_millis(80));
-    pb
+pub fn make_spinner(message: &str) -> Spinner {
+    Spinner::new(message)
 }
 
 // ─── shared formatting helpers ────────────────────────────────────────────────

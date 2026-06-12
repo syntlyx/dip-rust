@@ -1,7 +1,7 @@
 //! Proxy setup — `dip proxy init` and `dip proxy config`.
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::dns;
 use crate::proxy::certs;

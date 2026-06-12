@@ -1,5 +1,5 @@
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::project::ProjectConfig;
 use crate::proxy::config as proxy_config;
@@ -105,7 +105,7 @@ fn pick_and_open(routes: &[crate::proxy::config::Route], out: &Output) -> Result
 
 /// Open a URL in the default browser.
 fn open_url(url: &str, out: &Output) -> Result<()> {
-    use colored::Colorize;
+    use crate::utils::style::Stylize;
     out.info(&format!("Opening {}", url.cyan()));
 
     #[cfg(target_os = "macos")]

@@ -9,7 +9,7 @@ pub use docker::DockerRuntime;
 
 use anyhow::Result;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
 use crate::db::DbService;
@@ -74,6 +74,30 @@ pub struct RuntimeContainerCounts {
 pub struct RuntimeProjectContainer {
     pub labels: Value,
     pub ip: Option<String>,
+}
+
+// ─── exit status mapping ─────────────────────────────────────────────────────
+
+/// Map a child process `ExitStatus` to a shell-style exit code.
+///
+/// Returns the normal exit code when the process exited on its own. When the
+/// process was killed by a signal (Unix), follows the shell convention of
+/// `128 + signal` (e.g. SIGINT → 130, SIGTERM → 143). Falls back to 1 when
+/// neither is available.
+pub fn exit_code(status: &ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+
+    1
 }
 
 // ─── backend context ──────────────────────────────────────────────────────────
@@ -568,5 +592,31 @@ mod tests {
         assert_eq!(normalize_runtime("docker").unwrap(), "docker");
         assert_eq!(normalize_runtime("auto").unwrap(), "auto");
         assert!(normalize_runtime("apple").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_code_returns_normal_exit_codes() {
+        use super::exit_code;
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+
+        // Unix wait status: exit code N lives in the high byte (N << 8).
+        assert_eq!(exit_code(&ExitStatus::from_raw(0)), 0);
+        assert_eq!(exit_code(&ExitStatus::from_raw(0x100)), 1);
+        assert_eq!(exit_code(&ExitStatus::from_raw(42 << 8)), 42);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_code_maps_signals_to_128_plus_signal() {
+        use super::exit_code;
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::ExitStatus;
+
+        // Unix wait status: a kill signal lives in the low bits.
+        assert_eq!(exit_code(&ExitStatus::from_raw(2)), 130); // SIGINT
+        assert_eq!(exit_code(&ExitStatus::from_raw(9)), 137); // SIGKILL
+        assert_eq!(exit_code(&ExitStatus::from_raw(15)), 143); // SIGTERM
     }
 }

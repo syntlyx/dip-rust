@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::utils::output::Output;
 

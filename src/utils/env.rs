@@ -29,12 +29,21 @@ pub fn parse_env_line(line: &str) -> Option<(String, String)> {
     let line = line.strip_prefix("export ").unwrap_or(line);
     let (key, value) = line.split_once('=')?;
     let key = key.trim().to_string();
-    let value = value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string();
+    let value = strip_quotes(value.trim()).to_string();
     Some((key, value))
+}
+
+/// Strip exactly one pair of surrounding quotes (`"…"` or `'…'`).
+///
+/// Quotes are removed only when the value both starts and ends with the
+/// same quote character. Unbalanced or nested quotes are left untouched.
+fn strip_quotes(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if s.len() >= 2 && (bytes[0] == b'"' || bytes[0] == b'\'') && bytes[s.len() - 1] == bytes[0] {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
 }
 
 // ─── file parsing ─────────────────────────────────────────────────────────────
@@ -97,6 +106,39 @@ mod tests {
         let out = parse_env_str("export TOKEN=\"abc123\"\nKEY='xyz'\n");
         assert_eq!(out["TOKEN"], "abc123");
         assert_eq!(out["KEY"], "xyz");
+    }
+
+    #[test]
+    fn only_one_quote_pair_stripped() {
+        // Nested quotes: only the outer pair is removed
+        let out = parse_env_str("FOO=\"\"x\"\"\n");
+        assert_eq!(out["FOO"], "\"x\"");
+    }
+
+    #[test]
+    fn unbalanced_quotes_kept() {
+        // Mismatched quote chars are not stripped
+        let out = parse_env_str("FOO=\"abc'\n");
+        assert_eq!(out["FOO"], "\"abc'");
+    }
+
+    #[test]
+    fn single_quote_char_kept() {
+        // A lone quote (length 1) is left as-is
+        let out = parse_env_str("FOO=\"\n");
+        assert_eq!(out["FOO"], "\"");
+    }
+
+    #[test]
+    fn empty_value() {
+        let out = parse_env_str("FOO=\n");
+        assert_eq!(out["FOO"], "");
+    }
+
+    #[test]
+    fn other_quote_kind_inside_kept() {
+        let out = parse_env_str("FOO='don\"t'\n");
+        assert_eq!(out["FOO"], "don\"t");
     }
 
     #[test]

@@ -114,7 +114,7 @@ async fn handle_start(event: &DockerEvent, routes: &Arc<RwLock<Vec<Route>>>) {
     let Some(ip) = container_ip(&event.id).await else {
         eprintln!(
             "dip-watcher: cannot get IP for container {}",
-            &event.id[..12]
+            event.id.get(..12).unwrap_or(&event.id)
         );
         return;
     };

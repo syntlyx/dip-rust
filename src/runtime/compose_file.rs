@@ -484,7 +484,11 @@ fn parse_short_volume(raw: &str, base_dir: &Path) -> Option<VolumeConfig> {
                 read_only: parts.get(2).map(|mode| mode.contains("ro")),
             })
         }
-        _ => None,
+        _ => {
+            // 4+ colon-separated parts — not valid short volume syntax
+            eprintln!("dip: skipping unparseable volume entry: {raw}");
+            None
+        }
     }
 }
 

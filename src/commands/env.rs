@@ -1,5 +1,5 @@
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 use std::collections::BTreeSet;
 
 use crate::project::ProjectConfig;

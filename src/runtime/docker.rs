@@ -13,7 +13,7 @@ use crate::utils::output::{Output, colorize_compose_line, make_spinner};
 use super::{
     BackendCtx, ContainerRuntime, RuntimeBenchMeasurement, RuntimeBenchSpec, RuntimeBenchTotals,
     RuntimeContainerCounts, RuntimeProjectContainer, RuntimeSystemInfo, bench_disk_script,
-    bench_measurement, steady_bench_measurement,
+    bench_measurement, exit_code, steady_bench_measurement,
 };
 
 pub struct DockerRuntime;
@@ -113,7 +113,7 @@ impl ContainerRuntime for DockerRuntime {
             .envs(ctx.project.get_env())
             .status()?;
 
-        let code = status.code().unwrap_or(1);
+        let code = exit_code(&status);
         if !status.success() && code != 130 && !passthrough {
             anyhow::bail!("docker compose command failed (exit {})", status);
         }
@@ -158,7 +158,7 @@ impl ContainerRuntime for DockerRuntime {
         }
 
         let status = child.wait()?;
-        let code = status.code().unwrap_or(0);
+        let code = exit_code(&status);
         if !status.success() && code != 130 {
             anyhow::bail!("docker compose command failed (exit {})", status);
         }
@@ -195,7 +195,7 @@ impl ContainerRuntime for DockerRuntime {
 
     fn raw_stream(&self, args: &[&str]) -> Result<()> {
         let status = Command::new("docker").args(args).status()?;
-        let code = status.code().unwrap_or(0);
+        let code = exit_code(&status);
         if !status.success() && code != 130 {
             anyhow::bail!("docker command failed (exit {})", status);
         }
@@ -344,7 +344,7 @@ fn docker_db_services(ctx: &BackendCtx) -> Result<Vec<DbService>> {
         };
 
         let container_id = match c["Id"].as_str() {
-            Some(id) => id[..12].to_string(),
+            Some(id) => id.get(..12).unwrap_or(id).to_string(),
             None => continue,
         };
 

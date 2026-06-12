@@ -62,25 +62,26 @@ pub async fn handle_https(
             .unwrap());
     };
 
-    if is_upgrade_request(&req) {
-        return match super::upstream::proxy_upgrade(req, &upstream).await {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                eprintln!("upgrade error [{host} → {upstream}]: {e}");
-                Ok(error_resp(
-                    StatusCode::BAD_GATEWAY,
-                    format!("dip-proxy: upgrade error: {e}\n"),
-                ))
-            }
-        };
-    }
-
     let method = req.method().clone();
     let path = req
         .uri()
         .path_and_query()
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
+
+    if is_upgrade_request(&req) {
+        return match super::upstream::proxy_upgrade(req, &upstream).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let detail = format_error_chain(e.as_ref());
+                log_proxy_error("upgrade error", &method, &host, &path, &upstream, &detail);
+                Ok(error_resp(
+                    StatusCode::BAD_GATEWAY,
+                    error_body("upgrade error", &detail, &upstream),
+                ))
+            }
+        };
+    }
 
     let started = std::time::Instant::now();
 
@@ -92,10 +93,11 @@ pub async fn handle_https(
             Ok(resp)
         }
         Err(e) => {
-            eprintln!("proxy error [{host} → {upstream}]: {e}");
+            let detail = format_error_chain(e.as_ref());
+            log_proxy_error("proxy error", &method, &host, &path, &upstream, &detail);
             Ok(error_resp(
                 StatusCode::BAD_GATEWAY,
-                format!("dip-proxy: upstream error: {e}\n"),
+                error_body("upstream error", &detail, &upstream),
             ))
         }
     }
@@ -130,6 +132,84 @@ fn is_upgrade_request(req: &Request<Incoming>) -> bool {
         .unwrap_or(false)
 }
 
+fn log_proxy_error(
+    label: &str,
+    method: &hyper::Method,
+    host: &str,
+    path: &str,
+    upstream: &str,
+    detail: &str,
+) {
+    eprintln!("{label} [{method} {host}{path} -> {upstream}]: {detail}");
+    if let Some(hint) = proxy_error_hint(detail, upstream) {
+        eprintln!("  hint: {hint}");
+    }
+}
+
+fn error_body(label: &str, detail: &str, upstream: &str) -> String {
+    let mut body = format!("dip-proxy: {label}: {detail}\n");
+    if let Some(hint) = proxy_error_hint(detail, upstream) {
+        body.push_str("hint: ");
+        body.push_str(&hint);
+        body.push('\n');
+    }
+    body
+}
+
+fn format_error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut current = err.source();
+
+    while let Some(source) = current {
+        let text = source.to_string();
+        if !parts.iter().any(|part| part == &text) {
+            parts.push(text);
+        }
+        current = source.source();
+    }
+
+    parts.join(": ")
+}
+
+fn proxy_error_hint(detail: &str, upstream: &str) -> Option<String> {
+    let lower = detail.to_ascii_lowercase();
+
+    if lower.contains("connection refused")
+        || lower.contains("os error 61")
+        || lower.contains("os error 111")
+    {
+        return Some(format!(
+            "upstream refused TCP connection; check that the service is running and listening on {upstream}, then run `dip proxy sync` if the container IP changed"
+        ));
+    }
+
+    if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("operation timed out")
+    {
+        return Some(format!(
+            "connection to {upstream} timed out; the container network may be unreachable or the service may be stuck accepting connections"
+        ));
+    }
+
+    if lower.contains("no route to host")
+        || lower.contains("network is unreachable")
+        || lower.contains("host is down")
+    {
+        return Some(format!(
+            "cannot reach {upstream}; the route may point at a stale container IP, so try `dip proxy sync` or restart the project"
+        ));
+    }
+
+    if lower.contains("invalid uri") {
+        return Some(format!(
+            "proxy route target `{upstream}` is not a valid host:port upstream"
+        ));
+    }
+
+    None
+}
+
 pub fn error_resp(status: StatusCode, body: String) -> Response<RespBody> {
     Response::builder()
         .status(status)
@@ -145,10 +225,68 @@ fn access_log(
     status: StatusCode,
     elapsed: std::time::Duration,
 ) {
-    let now = chrono::Local::now().format("%H:%M:%S");
+    let now = crate::utils::local_hms();
     let ms = elapsed.as_millis();
     eprintln!(
         "{now}  {method:<6} {host}{path}  {}  {ms}ms",
         status.as_u16()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct ChainError {
+        message: &'static str,
+        source: Option<Box<ChainError>>,
+    }
+
+    impl fmt::Display for ChainError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(self.message)
+        }
+    }
+
+    impl std::error::Error for ChainError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.source
+                .as_deref()
+                .map(|source| source as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    #[test]
+    fn format_error_chain_includes_sources() {
+        let err = ChainError {
+            message: "client error (Connect)",
+            source: Some(Box::new(ChainError {
+                message: "tcp connect error",
+                source: Some(Box::new(ChainError {
+                    message: "Connection refused (os error 61)",
+                    source: None,
+                })),
+            })),
+        };
+
+        assert_eq!(
+            format_error_chain(&err),
+            "client error (Connect): tcp connect error: Connection refused (os error 61)"
+        );
+    }
+
+    #[test]
+    fn proxy_error_hint_explains_refused_connections() {
+        let hint = proxy_error_hint(
+            "client error: Connection refused (os error 61)",
+            "127.0.0.1:3000",
+        )
+        .unwrap();
+
+        assert!(hint.contains("upstream refused TCP connection"));
+        assert!(hint.contains("127.0.0.1:3000"));
+    }
 }

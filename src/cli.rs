@@ -215,6 +215,11 @@ pub enum Commands {
         service: String,
     },
     /// Execute a command inside a service container
+    ///
+    /// Arguments are passed straight to the container without an extra shell,
+    /// so quotes and metacharacters like () * ; survive intact (e.g. SQL via
+    /// `psql -c`). For pipes/redirects/variable expansion, run a shell
+    /// explicitly: `dip exec <service> sh -c "foo | bar"`.
     Exec {
         /// Service name
         service: String,

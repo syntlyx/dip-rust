@@ -1,5 +1,5 @@
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::commands::compose_config::{self, BuildConfig};
 use crate::commands::ctx::Ctx;

@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::dirs;
 use crate::proxy::config;

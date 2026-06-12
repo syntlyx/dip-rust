@@ -5,20 +5,21 @@
 //!
 //! Usage: `dip db migrate --from <mysql-service> --to <postgres-service>`
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use colored::Colorize;
 use futures::TryStreamExt;
-use indicatif::ProgressBar;
 use rust_decimal::Decimal;
 use sqlx::Row;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgSslMode};
+use time::macros::format_description;
+use time::{Date, PrimitiveDateTime, Time};
 
 use crate::db::{DbConfig, detect_by_labels};
 use crate::project::ProjectConfig;
 use crate::runtime::Runtime;
 use crate::utils::output::{Output, make_spinner};
+use crate::utils::spinner::Spinner;
 
 const CHUNK_SIZE: usize = 500;
 
@@ -748,7 +749,7 @@ async fn transfer_mysql_to_pg(
     dst: &PgPool,
     table: &str,
     cols: &[MysqlCol],
-    pb: &ProgressBar,
+    pb: &Spinner,
 ) -> Result<u64> {
     // Clear target table (CREATE TABLE IF NOT EXISTS may leave data from previous runs)
     let truncate_sql = format!(
@@ -836,7 +837,7 @@ async fn transfer_pg_to_mysql(
     dst: &MySqlPool,
     table: &str,
     cols: &[PgCol],
-    pb: &ProgressBar,
+    pb: &Spinner,
 ) -> Result<u64> {
     sqlx::query("SET FOREIGN_KEY_CHECKS=0")
         .execute(dst)
@@ -932,9 +933,9 @@ enum CellValue {
     Decimal(Decimal),
     Text(String),
     Bytes(Vec<u8>),
-    Date(NaiveDate),
-    Time(NaiveTime),
-    DateTime(NaiveDateTime),
+    Date(Date),
+    Time(Time),
+    DateTime(PrimitiveDateTime),
     Json(serde_json::Value),
 }
 
@@ -1021,19 +1022,19 @@ fn extract_mysql_cell(
             .map(CellValue::Bytes)
             .unwrap_or(CellValue::Null),
         "date" => row
-            .try_get::<Option<NaiveDate>, _>(idx)?
+            .try_get::<Option<Date>, _>(idx)?
             .map(CellValue::Date)
             .unwrap_or(CellValue::Null),
         "time" => {
-            // MySQL TIME can be > 24h or negative — fall back to Null if NaiveTime fails
-            row.try_get::<Option<NaiveTime>, _>(idx)
+            // MySQL TIME can be > 24h or negative — fall back to Null if Time fails
+            row.try_get::<Option<Time>, _>(idx)
                 .ok()
                 .flatten()
                 .map(CellValue::Time)
                 .unwrap_or(CellValue::Null)
         }
         "datetime" | "timestamp" => row
-            .try_get::<Option<NaiveDateTime>, _>(idx)?
+            .try_get::<Option<PrimitiveDateTime>, _>(idx)?
             .map(CellValue::DateTime)
             .unwrap_or(CellValue::Null),
         _ => {
@@ -1085,21 +1086,24 @@ fn extract_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &PgCol) -> Resu
             .map(CellValue::Bytes)
             .unwrap_or(CellValue::Null),
         "date" => row
-            .try_get::<Option<NaiveDate>, _>(idx)?
+            .try_get::<Option<Date>, _>(idx)?
             .map(CellValue::Date)
             .unwrap_or(CellValue::Null),
         "time without time zone" | "time with time zone" => row
-            .try_get::<Option<NaiveTime>, _>(idx)?
+            .try_get::<Option<Time>, _>(idx)?
             .map(CellValue::Time)
             .unwrap_or(CellValue::Null),
         "timestamp without time zone" => row
-            .try_get::<Option<NaiveDateTime>, _>(idx)?
+            .try_get::<Option<PrimitiveDateTime>, _>(idx)?
             .map(CellValue::DateTime)
             .unwrap_or(CellValue::Null),
         "timestamp with time zone" => {
-            // Read as UTC, convert to NaiveDateTime (TZ info dropped for MySQL DATETIME)
-            row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(idx)?
-                .map(|dt| CellValue::DateTime(dt.naive_utc()))
+            // Read as UTC, drop the offset (TZ info is lost in MySQL DATETIME anyway)
+            row.try_get::<Option<time::OffsetDateTime>, _>(idx)?
+                .map(|dt| {
+                    let utc = dt.to_offset(time::UtcOffset::UTC);
+                    CellValue::DateTime(PrimitiveDateTime::new(utc.date(), utc.time()))
+                })
                 .unwrap_or(CellValue::Null)
         }
         "json" | "jsonb" => row
@@ -1129,6 +1133,51 @@ fn extract_pg_cell(row: &sqlx::postgres::PgRow, idx: usize, col: &PgCol) -> Resu
 
 // ─── cell → SQL literal ───────────────────────────────────────────────────────
 
+const DATE_FMT: &[time::format_description::BorrowedFormatItem<'static>] =
+    format_description!("[year]-[month]-[day]");
+const TIME_FMT: &[time::format_description::BorrowedFormatItem<'static>] =
+    format_description!("[hour]:[minute]:[second]");
+const DATETIME_FMT: &[time::format_description::BorrowedFormatItem<'static>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+
+/// `YYYY-MM-DD`.
+fn date_literal(d: &Date) -> String {
+    d.format(DATE_FMT).expect("date formatting is infallible")
+}
+
+/// `HH:MM:SS` plus an optional fractional-seconds suffix.
+fn time_literal(t: &Time) -> String {
+    let mut s = t.format(TIME_FMT).expect("time formatting is infallible");
+    push_subsecond(&mut s, t.nanosecond());
+    s
+}
+
+/// `YYYY-MM-DD HH:MM:SS` plus an optional fractional-seconds suffix.
+fn datetime_literal(dt: &PrimitiveDateTime) -> String {
+    let mut s = dt
+        .format(DATETIME_FMT)
+        .expect("datetime formatting is infallible");
+    push_subsecond(&mut s, dt.nanosecond());
+    s
+}
+
+/// Append fractional seconds: nothing when the fraction is zero, otherwise a
+/// dot followed by 3, 6 or 9 digits depending on the actual precision of the
+/// value (millis, micros or nanos).
+fn push_subsecond(out: &mut String, nanos: u32) {
+    use std::fmt::Write;
+    if nanos == 0 {
+        return;
+    }
+    if nanos.is_multiple_of(1_000_000) {
+        let _ = write!(out, ".{:03}", nanos / 1_000_000);
+    } else if nanos.is_multiple_of(1_000) {
+        let _ = write!(out, ".{:06}", nanos / 1_000);
+    } else {
+        let _ = write!(out, ".{nanos:09}");
+    }
+}
+
 fn cell_to_pg_literal(val: &CellValue) -> String {
     match val {
         CellValue::Null => "NULL".into(),
@@ -1145,9 +1194,9 @@ fn cell_to_pg_literal(val: &CellValue) -> String {
         CellValue::Decimal(d) => d.to_string(),
         CellValue::Text(s) => pg_string_literal(s),
         CellValue::Bytes(b) => format!("'\\x{}'", hex_encode(b)),
-        CellValue::Date(d) => format!("'{}'", d.format("%Y-%m-%d")),
-        CellValue::Time(t) => format!("'{}'", t.format("%H:%M:%S%.f")),
-        CellValue::DateTime(dt) => format!("'{}'", dt.format("%Y-%m-%d %H:%M:%S%.f")),
+        CellValue::Date(d) => format!("'{}'", date_literal(d)),
+        CellValue::Time(t) => format!("'{}'", time_literal(t)),
+        CellValue::DateTime(dt) => format!("'{}'", datetime_literal(dt)),
         CellValue::Json(j) => pg_string_literal(&j.to_string()),
     }
 }
@@ -1162,9 +1211,9 @@ fn cell_to_mysql_literal(val: &CellValue) -> String {
         CellValue::Decimal(d) => d.to_string(),
         CellValue::Text(s) => format!("'{}'", mysql_escape_str(s)),
         CellValue::Bytes(b) => format!("X'{}'", hex_encode(b)),
-        CellValue::Date(d) => format!("'{}'", d.format("%Y-%m-%d")),
-        CellValue::Time(t) => format!("'{}'", t.format("%H:%M:%S%.f")),
-        CellValue::DateTime(dt) => format!("'{}'", dt.format("%Y-%m-%d %H:%M:%S%.f")),
+        CellValue::Date(d) => format!("'{}'", date_literal(d)),
+        CellValue::Time(t) => format!("'{}'", time_literal(t)),
+        CellValue::DateTime(dt) => format!("'{}'", datetime_literal(dt)),
         CellValue::Json(j) => format!("'{}'", mysql_escape_str(&j.to_string())),
     }
 }
@@ -1240,7 +1289,7 @@ fn mysql_escape_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use time::macros::{date, datetime, time};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -1641,8 +1690,32 @@ mod tests {
 
     #[test]
     fn pg_literal_date() {
-        let d = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        let d = date!(2024 - 06 - 15);
         assert_eq!(cell_to_pg_literal(&CellValue::Date(d)), "'2024-06-15'");
+    }
+
+    #[test]
+    fn pg_literal_time_fraction_only_when_nonzero() {
+        let t = time!(13:05:07);
+        assert_eq!(cell_to_pg_literal(&CellValue::Time(t)), "'13:05:07'");
+        let t = time!(13:05:07.5);
+        assert_eq!(cell_to_pg_literal(&CellValue::Time(t)), "'13:05:07.500'");
+        let t = time!(13:05:07.000123);
+        assert_eq!(cell_to_pg_literal(&CellValue::Time(t)), "'13:05:07.000123'");
+    }
+
+    #[test]
+    fn pg_literal_datetime() {
+        let dt = datetime!(2024-06-15 13:05:07);
+        assert_eq!(
+            cell_to_pg_literal(&CellValue::DateTime(dt)),
+            "'2024-06-15 13:05:07'"
+        );
+        let dt = datetime!(2024-06-15 13:05:07.25);
+        assert_eq!(
+            cell_to_pg_literal(&CellValue::DateTime(dt)),
+            "'2024-06-15 13:05:07.250'"
+        );
     }
 
     #[test]
@@ -1686,7 +1759,7 @@ mod tests {
 
     #[test]
     fn mysql_literal_date() {
-        let d = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let d = date!(2024 - 01 - 01);
         assert_eq!(cell_to_mysql_literal(&CellValue::Date(d)), "'2024-01-01'");
     }
 }

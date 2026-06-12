@@ -12,9 +12,9 @@ mod templates;
 mod tunnel;
 mod utils;
 
+use crate::utils::style::Stylize;
 use clap::Parser;
 use cli::{BenchCommands, Cli, Commands, DbCommands, EnvCommands, ExplainCommands, ProxyCommands};
-use colored::Colorize;
 
 fn main() {
     let cli = Cli::parse();

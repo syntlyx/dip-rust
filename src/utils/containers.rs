@@ -1,7 +1,7 @@
 //! Shared container types and helpers used by status, health, and other commands.
 
+use crate::utils::style::{Styled, Stylize};
 use anyhow::Result;
-use colored::{ColoredString, Colorize};
 use serde::Deserialize;
 
 use crate::runtime::Runtime;
@@ -46,7 +46,7 @@ pub fn fetch_containers(rt: &Runtime, verbose: bool) -> Result<Vec<ContainerRow>
 /// paused   → yellow ●
 /// _        → dimmed ●
 /// ```
-pub fn state_icon(state: &str) -> ColoredString {
+pub fn state_icon(state: &str) -> Styled {
     match state {
         "running" => "●".green().bold(),
         "exited" | "dead" => "●".red(),

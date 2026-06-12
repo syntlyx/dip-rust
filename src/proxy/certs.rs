@@ -14,8 +14,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, DnValue, IsCa,
-    KeyPair, KeyUsagePurpose,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, DnValue, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose,
 };
 use time::OffsetDateTime;
 
@@ -42,8 +42,9 @@ fn sans_file() -> PathBuf {
 // ─── public API ──────────────────────────────────────────────────────────────
 
 /// Ensure CA exists. Creates it on first call.
-/// Returns (cert, keypair) for signing operations.
-pub fn ensure_ca() -> Result<(Certificate, KeyPair)> {
+/// Returns (cert PEM, keypair) for signing operations — the PEM is the exact
+/// on-disk cert, so the chain written later matches what's in the trust store.
+pub fn ensure_ca() -> Result<(String, KeyPair)> {
     let cert_path = ca_cert_path();
     let key_path = ca_key_path();
 
@@ -51,9 +52,7 @@ pub fn ensure_ca() -> Result<(Certificate, KeyPair)> {
         let key_pem = std::fs::read_to_string(&key_path)?;
         let cert_pem = std::fs::read_to_string(&cert_path)?;
         let key_pair = KeyPair::from_pem(&key_pem)?;
-        let params = CertificateParams::from_ca_cert_pem(&cert_pem)?;
-        let cert = params.self_signed(&key_pair)?;
-        return Ok((cert, key_pair));
+        return Ok((cert_pem, key_pair));
     }
 
     std::fs::create_dir_all(dirs::proxy_dir())?;
@@ -69,9 +68,9 @@ pub fn ensure_ca() -> Result<(Certificate, KeyPair)> {
 
     let cert = params.self_signed(&key_pair)?;
     write_600(&key_path, key_pair.serialize_pem().as_bytes())?;
-    std::fs::write(&cert_path, cert.pem())?;
+    write_atomic(&cert_path, cert.pem().as_bytes(), None)?;
 
-    Ok((cert, key_pair))
+    Ok((cert.pem(), key_pair))
 }
 
 /// Ensure the server cert covers all domains.
@@ -111,7 +110,8 @@ pub fn ensure_server_cert(domains: &[String]) -> Result<bool> {
         return Ok(false);
     }
 
-    let (ca_cert, ca_key) = ensure_ca()?;
+    let (ca_pem, ca_key) = ensure_ca()?;
+    let ca_issuer = Issuer::from_ca_cert_pem(&ca_pem, ca_key)?;
     let srv_key = KeyPair::generate()?;
 
     let mut sans: Vec<String> = needed.iter().cloned().collect();
@@ -139,13 +139,14 @@ pub fn ensure_server_cert(domains: &[String]) -> Result<bool> {
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
 
-    let domain_cert = params.signed_by(&srv_key, &ca_cert, &ca_key)?;
+    let domain_cert = params.signed_by(&srv_key, &ca_issuer)?;
 
     write_600(&srv_key_path(), srv_key.serialize_pem().as_bytes())?;
     // Chain = server cert + CA cert (browser needs both to verify the chain)
-    std::fs::write(
-        srv_cert_path(),
-        format!("{}{}", domain_cert.pem(), ca_cert.pem()),
+    write_atomic(
+        &srv_cert_path(),
+        format!("{}{}", domain_cert.pem(), ca_pem).as_bytes(),
+        None,
     )?;
 
     save_sans(&needed)?;
@@ -342,8 +343,7 @@ fn cert_needs_regen(needed: &BTreeSet<String>) -> bool {
 
 fn save_sans(sans: &BTreeSet<String>) -> Result<()> {
     let content: String = sans.iter().cloned().collect::<Vec<_>>().join("\n");
-    std::fs::write(sans_file(), content)?;
-    Ok(())
+    write_atomic(&sans_file(), content.as_bytes(), None)
 }
 
 fn ca_dn() -> DistinguishedName {
@@ -374,15 +374,38 @@ fn server_dn(cn: &str) -> DistinguishedName {
     dn
 }
 
-fn write_600(path: &PathBuf, data: &[u8]) -> Result<()> {
+/// Write `data` to `path` atomically: write into a sibling `<name>.tmp` file,
+/// then rename it over the target. A rename within the same filesystem is
+/// atomic, so readers never observe a partially written file even if the
+/// process dies mid-write or two processes write concurrently.
+fn write_atomic(path: &PathBuf, data: &[u8], mode: Option<u32>) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut tmp = path.clone().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    if let Some(m) = mode {
+        opts.mode(m);
+    }
+    let mut f = opts.open(&tmp)?;
+    if let Some(m) = mode {
+        // mode() only applies on creation — enforce it even if a stale tmp existed
+        f.set_permissions(std::fs::Permissions::from_mode(m))?;
+    }
     f.write_all(data)?;
+    // Flush to disk before the rename so the target never points at lost data
+    f.sync_all()?;
+    drop(f);
+
+    std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn write_600(path: &PathBuf, data: &[u8]) -> Result<()> {
+    write_atomic(path, data, Some(0o600))
 }

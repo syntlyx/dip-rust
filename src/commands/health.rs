@@ -1,5 +1,5 @@
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::commands::ctx::Ctx;
 use crate::utils::containers::{fetch_containers, state_icon};

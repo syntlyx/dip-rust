@@ -110,7 +110,13 @@ fn run_hook(
     let mut captured = String::new();
     if let Some(stdout) = child.stdout.take() {
         for line in BufReader::new(stdout).lines() {
-            let line = line.unwrap_or_default();
+            let line = match line {
+                Ok(line) => line,
+                Err(e) => {
+                    eprintln!("dip: warning: failed to read hook stdout: {e}");
+                    break;
+                }
+            };
             if show_stdout {
                 println!("  {line}");
             }

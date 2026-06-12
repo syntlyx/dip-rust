@@ -1,5 +1,5 @@
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::project::ProjectConfig;
 use crate::runtime::{self, Runtime};

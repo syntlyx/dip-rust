@@ -84,25 +84,25 @@ commands are plain executable scripts.
 
 `dip init` is interactive, or you can pass `--template <name>`.
 
-| Template | Stack |
-| --- | --- |
-| `nestjs` | NestJS, PostgreSQL, Valkey, TypeORM |
-| `nextjs` | Next.js, PostgreSQL, Valkey, Prisma |
-| `nuxt` | Nuxt 3, PostgreSQL, Valkey, Prisma |
-| `sveltekit` | SvelteKit, PostgreSQL, Prisma |
-| `react` | React, Vite, TypeScript |
-| `angular` | Angular CLI, TypeScript |
-| `express` | Express 5, PostgreSQL |
-| `node` | Node.js bare |
+| Template     | Stack                                       |
+| ------------ | ------------------------------------------- |
+| `nestjs`     | NestJS, PostgreSQL, Valkey, TypeORM         |
+| `nextjs`     | Next.js, PostgreSQL, Valkey, Prisma         |
+| `nuxt`       | Nuxt 3, PostgreSQL, Valkey, Prisma          |
+| `sveltekit`  | SvelteKit, PostgreSQL, Prisma               |
+| `react`      | React, Vite, TypeScript                     |
+| `angular`    | Angular CLI, TypeScript                     |
+| `express`    | Express 5, PostgreSQL                       |
+| `node`       | Node.js bare                                |
 | `node-multi` | Node.js multi-service workspace, PostgreSQL |
-| `django` | Django, PostgreSQL, Valkey, Celery |
-| `fastapi` | FastAPI, PostgreSQL, Valkey, Alembic, uv |
-| `laravel` | Laravel, MySQL, Valkey, nginx, queue worker |
-| `wordpress` | WordPress, MySQL, nginx, WP-CLI |
-| `drupal` | Drupal 11, MySQL, nginx, Drush |
-| `rails` | Ruby on Rails, PostgreSQL, Valkey, Sidekiq |
-| `go` | Go, PostgreSQL, Air |
-| `rust` | Axum, PostgreSQL, sqlx, cargo-watch |
+| `django`     | Django, PostgreSQL, Valkey, Celery          |
+| `fastapi`    | FastAPI, PostgreSQL, Valkey, Alembic, uv    |
+| `laravel`    | Laravel, MySQL, Valkey, nginx, queue worker |
+| `wordpress`  | WordPress, MySQL, nginx, WP-CLI             |
+| `drupal`     | Drupal 11, MySQL, nginx, Drush              |
+| `rails`      | Ruby on Rails, PostgreSQL, Valkey, Sidekiq  |
+| `go`         | Go, PostgreSQL, Air                         |
+| `rust`       | Axum, PostgreSQL, sqlx, cargo-watch         |
 
 Every template layers shared `.dip` defaults with stack-specific Compose,
 Dockerfile, hooks, and commands.
@@ -152,6 +152,13 @@ dip shell app
 dip shell app --type sh
 dip bash app
 dip exec app pnpm test
+
+# Arguments are passed straight to the container (no extra shell layer),
+# so quotes and shell metacharacters like () * ; survive intact:
+dip exec db psql -U postgres -c "SELECT count(*) FROM users WHERE id IN (1,2,3)"
+
+# For pipes, redirects, or variable expansion, invoke a shell explicitly:
+dip exec app sh -c "ls | wc -l"
 ```
 
 Project scripts:
@@ -364,12 +371,12 @@ plain shell commands from inside the project tree.
 
 Hooks live in `.dip/hooks/` and run around lifecycle commands:
 
-| Hook | Failure behavior | Runs |
-| --- | --- | --- |
-| `pre-start` | aborts | before containers start |
-| `post-start` | warning | after containers start |
-| `pre-stop` | warning | before containers stop |
-| `post-stop` | warning | after containers stop |
+| Hook         | Failure behavior | Runs                    |
+| ------------ | ---------------- | ----------------------- |
+| `pre-start`  | aborts           | before containers start |
+| `post-start` | warning          | after containers start  |
+| `pre-stop`   | warning          | before containers stop  |
+| `post-stop`  | warning          | after containers stop   |
 
 `pre-start` may print `KEY=VALUE` lines; those values are injected into the
 project runtime environment.

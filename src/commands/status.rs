@@ -1,7 +1,7 @@
 use std::time::Duration;
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::commands::ctx::Ctx;
 use crate::utils::containers::{fetch_containers, state_icon};
@@ -32,13 +32,8 @@ pub fn run(
         loop {
             // Move cursor to top-left and clear screen for in-place refresh.
             print!("\x1b[H\x1b[2J");
-            let now = chrono::Local::now().format("%H:%M:%S");
-            println!(
-                "  {} {}s  {}",
-                "watch".dimmed(),
-                interval,
-                now.to_string().dimmed()
-            );
+            let now = crate::utils::local_hms();
+            println!("  {} {}s  {}", "watch".dimmed(), interval, now.dimmed());
             // Ignore errors mid-loop — containers may be momentarily unreachable.
             let _ = print_table(&ctx, &project_name, verbose);
             std::thread::sleep(delay);

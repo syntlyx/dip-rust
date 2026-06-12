@@ -67,7 +67,7 @@ pub fn run(script: Option<&str>, args: &[String], verbose: bool, no_color: bool)
         .status()?;
 
     if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
+        std::process::exit(crate::runtime::exit_code(&status));
     }
 
     Ok(())

@@ -3,8 +3,8 @@ use std::io::BufRead;
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::utils::style::Stylize;
 use anyhow::{Context, Result};
-use colored::Colorize;
 use serde_json::Value;
 
 use crate::db::{DbConfig, DbService, MySqlBackend, PostgresBackend};
@@ -15,7 +15,7 @@ use crate::utils::output::{Output, colorize_compose_line, service_color};
 
 use super::{
     BackendCtx, ContainerRuntime, RuntimeBenchMeasurement, RuntimeBenchSpec, RuntimeBenchTotals,
-    RuntimeProjectContainer, RuntimeSystemInfo, bench_disk_script, bench_measurement,
+    RuntimeProjectContainer, RuntimeSystemInfo, bench_disk_script, bench_measurement, exit_code,
     steady_bench_measurement,
 };
 
@@ -473,7 +473,7 @@ fn exec_service(ctx: &BackendCtx, args: &[&str], passthrough: bool) -> Result<i3
     let status = command_owned(&translated)
         .status()
         .context("failed to run container exec")?;
-    let code = status.code().unwrap_or(1);
+    let code = exit_code(&status);
     if !status.success() && code != 130 && !passthrough {
         anyhow::bail!("container exec failed (exit {})", status);
     }
@@ -553,7 +553,7 @@ fn stream_multi_logs(
     let mut failed = None;
     for mut child in children {
         let status = child.wait()?;
-        let code = status.code().unwrap_or(0);
+        let code = exit_code(&status);
         if !status.success() && code != 130 {
             failed = Some(status);
         }

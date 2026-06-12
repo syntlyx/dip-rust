@@ -1,4 +1,4 @@
-use colored::Colorize;
+use crate::utils::style::Stylize;
 
 use crate::proxy::{certs, config};
 use crate::utils::output::Output;

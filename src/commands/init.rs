@@ -151,7 +151,7 @@ fn make_executable(path: &Path) -> Result<()> {
 
 /// Show a numbered template menu and return the chosen template (or None for bare).
 fn prompt_template() -> Result<Option<&'static templates::TemplateMeta>> {
-    use colored::Colorize;
+    use crate::utils::style::Stylize;
 
     println!("  Choose a template:");
     println!();

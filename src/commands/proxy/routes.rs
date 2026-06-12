@@ -1,7 +1,7 @@
 //! Route management — add, remove, sync, and Docker label discovery.
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::project::ProjectConfig;
 use crate::proxy::certs;

@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
+use crate::utils::style::Stylize;
 use anyhow::Result;
-use colored::Colorize;
 use serde::Serialize;
 
 use crate::project::ProjectConfig;
