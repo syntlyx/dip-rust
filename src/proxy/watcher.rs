@@ -88,9 +88,15 @@ async fn watch_loop(routes: &Arc<RwLock<Vec<Route>>>) -> anyhow::Result<()> {
 
         match event.action.as_str() {
             "start" => {
-                // Brief pause — container networking takes a moment to init
-                tokio::time::sleep(Duration::from_millis(400)).await;
-                handle_start(&event, routes).await;
+                // Runs as a task so a burst of starting containers (dip start
+                // on a big project) doesn't serialize behind each other's
+                // 400ms networking-init pause. If the container dies before
+                // the task runs, inspect returns no IP and we simply skip it.
+                let routes = routes.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                    handle_start(&event, &routes).await;
+                });
             }
             "stop" | "die" | "kill" | "destroy" => {
                 handle_stop(&event, routes).await;

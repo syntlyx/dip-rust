@@ -82,9 +82,13 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
 
     // One shared HTTP/1.1 client for all proxy requests — reuses TCP connections
     // per upstream via keep-alive, avoiding a new TCP handshake on every request.
-    let http_client: PooledClient = Arc::new(
-        Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(HttpConnector::new()),
-    );
+    // Connect timeout: upstreams are local containers, so if a connect takes
+    // seconds the container is gone — fail fast instead of the ~75s OS default.
+    // No response timeout on purpose: xdebug sessions hold requests for minutes.
+    let mut connector = HttpConnector::new();
+    connector.set_connect_timeout(Some(std::time::Duration::from_secs(5)));
+    let http_client: PooledClient =
+        Arc::new(Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(connector));
 
     // ── HTTP: redirect to HTTPS ───────────────────────────────────────────
     let http_task = tokio::spawn(async move {
