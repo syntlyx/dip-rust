@@ -24,6 +24,11 @@ use tokio::net::UdpSocket;
 
 const TTL: u32 = 60;
 
+/// EDNS0 UDP payload size. The old 512-byte RFC 1035 limit silently
+/// truncates modern responses (DNSSEC, HTTPS/SVCB records, long CDN
+/// chains), which clients see as intermittently broken resolution.
+const MAX_PACKET: usize = 4096;
+
 /// Starts the DNS server. Blocks until an error occurs.
 pub async fn run(port: u16, tlds: Vec<String>, upstream: String) -> anyhow::Result<()> {
     let sock = Arc::new(
@@ -33,7 +38,7 @@ pub async fn run(port: u16, tlds: Vec<String>, upstream: String) -> anyhow::Resu
     );
     eprintln!("dip-dns: :{port} — *.{} → 127.0.0.1", tlds.join(", *."));
 
-    let mut buf = vec![0u8; 512];
+    let mut buf = vec![0u8; MAX_PACKET];
     loop {
         let (len, client) = match sock.recv_from(&mut buf).await {
             Ok(v) => v,
@@ -121,14 +126,27 @@ fn make_response(query: &[u8]) -> Option<Vec<u8>> {
 
 /// Forward a query to the upstream resolver and return the raw response.
 async fn forward(data: &[u8], upstream: &str) -> anyhow::Result<Vec<u8>> {
+    if data.len() < 12 {
+        anyhow::bail!("not a DNS packet ({} bytes)", data.len());
+    }
     let upstream_addr: SocketAddr = upstream.parse()?;
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
-    sock.send_to(data, upstream_addr).await?;
+    // connect() makes the kernel drop datagrams from any other source —
+    // otherwise anyone able to hit our ephemeral port could inject a
+    // spoofed answer while we wait for the real resolver.
+    sock.connect(upstream_addr).await?;
+    sock.send(data).await?;
 
-    let mut buf = vec![0u8; 512];
-    let (len, _) = tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await??;
-
-    Ok(buf[..len].to_vec())
+    let mut buf = vec![0u8; MAX_PACKET];
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let len = tokio::time::timeout_at(deadline, sock.recv(&mut buf)).await??;
+        // Transaction ID must echo the query's — a stale or off-path
+        // datagram that slipped through is dropped, not returned.
+        if len >= 2 && buf[..2] == data[..2] {
+            return Ok(buf[..len].to_vec());
+        }
+    }
 }
 
 // ─── DNS packet parsing ───────────────────────────────────────────────────────
@@ -259,6 +277,47 @@ mod tests {
         let r = make_response(&q).expect("response built");
         // Last 4 bytes of the response are the IP address
         assert_eq!(&r[r.len() - 4..], &[127, 0, 0, 1]);
+    }
+
+    /// Packet parsers must never panic on garbage — the DNS port receives
+    /// whatever any local process throws at it. Deterministic pseudo-random
+    /// inputs plus truncations of a valid query.
+    #[test]
+    fn parsers_never_panic_on_garbage() {
+        let tlds = vec!["test".to_string()];
+        // Truncations of a real query hit every length-check boundary.
+        let q = make_a_query("app.some-long-subdomain.test");
+        for cut in 0..q.len() {
+            let _ = matches_tld(&q[..cut], &tlds);
+            let _ = make_response(&q[..cut]);
+        }
+        // Simple LCG for reproducible random packets (no rand dependency).
+        let mut state: u64 = 0x1234_5678_9abc_def0;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+        for _ in 0..5000 {
+            let len = (next() as usize) % 64;
+            let pkt: Vec<u8> = (0..len).map(|_| next()).collect();
+            let _ = matches_tld(&pkt, &tlds);
+            let _ = make_response(&pkt);
+            let _ = parse_first_question(&pkt);
+            let _ = question_section_end(&pkt);
+        }
+        // Pointer bytes (0xC0) and zero-length labels in every position.
+        let mut pathological = make_a_query("a.test");
+        for i in 12..pathological.len() {
+            let orig = pathological[i];
+            for b in [0x00, 0xC0, 0xFF] {
+                pathological[i] = b;
+                let _ = matches_tld(&pathological, &tlds);
+                let _ = make_response(&pathological);
+            }
+            pathological[i] = orig;
+        }
     }
 
     #[test]
