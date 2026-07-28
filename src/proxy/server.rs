@@ -7,7 +7,6 @@ use http_body_util::Full;
 use hyper::server::conn::http1 as server_http1;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto as server_auto;
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -135,10 +134,11 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
                     }
                 };
                 let io = TokioIo::new(tls_stream);
-                // auto::Builder negotiates H2 or H1.1 based on ALPN.
-                // serve_connection_with_upgrades keeps WebSocket working on H1.1.
-                let _ = server_auto::Builder::new(TokioExecutor::new())
-                    .serve_connection_with_upgrades(
+                // HTTP/1.1 only: a local dev proxy gains nothing from h2, and
+                // dropping it removes the whole h2 stack from the binary.
+                // with_upgrades() keeps WebSocket working.
+                let _ = server_http1::Builder::new()
+                    .serve_connection(
                         io,
                         hyper::service::service_fn(move |req| {
                             super::handler::handle_https(
@@ -149,6 +149,7 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
                             )
                         }),
                     )
+                    .with_upgrades()
                     .await;
             });
         }
@@ -215,7 +216,7 @@ fn make_tls_acceptor() -> Result<TlsAcceptor> {
         .with_single_cert(cert_chain, key)
         .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
 
-    tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(TlsAcceptor::from(Arc::new(tls_config)))
 }
 
