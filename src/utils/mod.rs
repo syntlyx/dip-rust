@@ -4,6 +4,7 @@ pub mod notify;
 pub mod output;
 pub mod spinner;
 pub mod style;
+pub mod yaml;
 
 use std::path::Path;
 

@@ -122,7 +122,7 @@ impl ServiceConfig {
 pub fn load_project_compose(project: &ProjectConfig) -> Result<ComposeConfig> {
     let content = std::fs::read_to_string(&project.compose_file)
         .with_context(|| format!("failed to read {}", project.compose_file.display()))?;
-    let value: Value = noyalib::from_str(&content)
+    let value: Value = crate::utils::yaml::from_str(&content)
         .with_context(|| format!("failed to parse {}", project.compose_file.display()))?;
     let value = interpolate_value(value, &project.get_env());
     let base_dir = project
@@ -616,7 +616,7 @@ FROM alpine
     #[test]
     fn parses_build_string_and_env_defaults() {
         let base = Path::new("/project/.dip");
-        let value: Value = noyalib::from_str(
+        let value: Value = crate::utils::yaml::from_str(
             r#"
 services:
   app:
@@ -646,7 +646,7 @@ services:
     #[test]
     fn parses_merge_key_for_service_defaults() {
         let base = Path::new("/project/.dip");
-        let value: Value = noyalib::from_str(
+        let value: Value = crate::utils::yaml::from_str(
             r#"
 x-app: &app
   build:
@@ -674,4 +674,5 @@ services:
             "/project/.dip/env/base.env"
         );
     }
+
 }
