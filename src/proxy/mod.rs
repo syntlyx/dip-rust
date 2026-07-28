@@ -6,6 +6,9 @@ pub mod server;
 pub mod upstream;
 pub mod watcher;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use bytes::Bytes;

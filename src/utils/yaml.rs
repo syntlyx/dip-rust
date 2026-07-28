@@ -883,6 +883,55 @@ mod tests {
         );
     }
 
+    /// The parser must never panic — any input returns Ok or Err. Exercises
+    /// random inputs, truncations, and byte mutations of the most complex
+    /// real compose file (node-multi: anchors, merge keys, flow lists).
+    #[test]
+    fn parser_never_panics_on_garbage() {
+        let template = crate::templates::find("node-multi")
+            .unwrap()
+            .dir
+            .get_file("docker-compose.yml")
+            .unwrap()
+            .contents_utf8()
+            .unwrap();
+
+        // Truncation at every byte boundary (lossy re-decode keeps it a &str).
+        let bytes = template.as_bytes();
+        for cut in 0..bytes.len() {
+            let s = String::from_utf8_lossy(&bytes[..cut]);
+            let _ = from_str(&s);
+        }
+
+        // Simple LCG for reproducible pseudo-random inputs (no rand dep).
+        let mut state: u64 = 0xdead_beef_cafe_f00d;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u8
+        };
+
+        // Random byte soup, biased toward YAML-significant characters.
+        let alphabet = b" -:#&*[]{}\"'|>\n\t.0123456789abc$";
+        for _ in 0..3000 {
+            let len = (next() as usize) % 120;
+            let s: String = (0..len)
+                .map(|_| alphabet[(next() as usize) % alphabet.len()] as char)
+                .collect();
+            let _ = from_str(&s);
+        }
+
+        // Single-byte mutations of the real template.
+        for _ in 0..2000 {
+            let mut m = bytes.to_vec();
+            let pos = (next() as usize * 256 + next() as usize) % m.len();
+            m[pos] = next();
+            let s = String::from_utf8_lossy(&m);
+            let _ = from_str(&s);
+        }
+    }
+
     /// node-multi is the anchor/merge stress test: `x-app: &app` + `<<: *app`.
     #[test]
     fn node_multi_merge_produces_full_services() {
