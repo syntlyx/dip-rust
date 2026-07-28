@@ -25,11 +25,14 @@ cd /app
 if [ ! -f "/app/package.json" ]; then
   echo "[entrypoint] No package.json found; creating a minimal pnpm workspace..."
 
-  cat > package.json <<'JSON'
+  # corepack rejects dist-tags in packageManager; pin the activated version
+  PNPM_VERSION="$(pnpm --version)"
+
+  cat > package.json <<JSON
 {
   "name": "workspace",
   "private": true,
-  "packageManager": "pnpm@latest",
+  "packageManager": "pnpm@${PNPM_VERSION}",
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:api": "pnpm --filter api dev",

@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[pnpm] $*${NOFORMAT}"
-dip exec app "pnpm $*"
+dip exec app pnpm "$@"

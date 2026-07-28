@@ -15,7 +15,7 @@ case "$1" in
   ;;
 *)
   msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
-  dip exec app "php artisan migrate --force $*"
+  dip exec app php artisan migrate --force "$@"
   ;;
 esac
 

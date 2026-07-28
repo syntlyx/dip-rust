@@ -11,7 +11,7 @@ case "$1" in
   ;;
 --make)
   msg "${YELLOW}[alembic] generating migration: ${2}${NOFORMAT}"
-  dip exec app "alembic revision --autogenerate -m '${2:-migration}'"
+  dip exec app alembic revision --autogenerate -m "${2:-migration}"
   ;;
 --rollback)
   msg "${YELLOW}[alembic] rolling back one step...${NOFORMAT}"

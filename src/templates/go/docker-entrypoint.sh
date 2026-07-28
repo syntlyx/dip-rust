@@ -6,7 +6,7 @@ if [ ! -f "/app/go.mod" ]; then
   echo "[entrypoint] No Go project found — scaffolding..."
 
   cd /app
-  go mod init ${PROJECT_NAME}
+  go mod init "${PROJECT_NAME}"
 
   mkdir -p cmd/api
   cat >cmd/api/main.go <<'GOEOF'

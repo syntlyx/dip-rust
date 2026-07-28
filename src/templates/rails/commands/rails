@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[rails] $*${NOFORMAT}"
-dip exec app "bundle exec rails $*"
+dip exec app bundle exec rails "$@"

@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[nest] $*${NOFORMAT}"
-dip exec app "node_modules/.bin/nest $*"
+dip exec app node_modules/.bin/nest "$@"

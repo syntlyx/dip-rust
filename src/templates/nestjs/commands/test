@@ -15,6 +15,6 @@ case "$1" in
   ;;
 *)
   msg "${YELLOW}[test] unit${NOFORMAT}"
-  dip exec app "pnpm run test $*"
+  dip exec app pnpm run test "$@"
   ;;
 esac

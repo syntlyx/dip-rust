@@ -5,7 +5,7 @@ set -e
 if [ ! -f "/app/Cargo.toml" ]; then
   echo "[entrypoint] No Rust project found — scaffolding..."
 
-  cargo init /app --name ${PROJECT_NAME}
+  cargo init /app --name "${PROJECT_NAME}"
 
   cat >/app/Cargo.toml <<EOF
 [package]

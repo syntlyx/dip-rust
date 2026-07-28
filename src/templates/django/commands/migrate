@@ -7,15 +7,15 @@ source "${DIP_DIR}/commands/utils/color.sh"
 case "$1" in
 --make)
   msg "${YELLOW}[migrate] making migrations...${NOFORMAT}"
-  dip exec app "python manage.py makemigrations ${@:2}"
+  dip exec app python manage.py makemigrations "${@:2}"
   ;;
 --rollback)
   msg "${YELLOW}[migrate] rolling back...${NOFORMAT}"
-  dip exec app "python manage.py migrate ${@:2}"
+  dip exec app python manage.py migrate "${@:2}"
   ;;
 *)
   msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
-  dip exec app "python manage.py migrate $*"
+  dip exec app python manage.py migrate "$@"
   ;;
 esac
 

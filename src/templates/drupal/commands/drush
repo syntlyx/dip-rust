@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[drush] $*${NOFORMAT}"
-dip exec app "/var/www/html/vendor/bin/drush $*"
+dip exec app /var/www/html/vendor/bin/drush "$@"

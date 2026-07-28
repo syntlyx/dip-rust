@@ -8,7 +8,7 @@ case "$1" in
 --dev)
   MIGRATION_NAME="${2:-migration}"
   msg "${YELLOW}[migrate] creating migration: ${MIGRATION_NAME}${NOFORMAT}"
-  dip exec app "pnpm dlx prisma migrate dev --name ${MIGRATION_NAME}"
+  dip exec app pnpm dlx prisma migrate dev --name "${MIGRATION_NAME}"
   ;;
 --reset)
   msg "${YELLOW}[migrate] resetting database...${NOFORMAT}"

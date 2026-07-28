@@ -7,7 +7,7 @@ source "${DIP_DIR}/commands/utils/color.sh"
 case "$1" in
 --add)
   msg "${YELLOW}[migrate] creating migration: ${2}${NOFORMAT}"
-  dip exec app "sqlx migrate add ${2:-migration}"
+  dip exec app sqlx migrate add "${2:-migration}"
   ;;
 --revert)
   msg "${YELLOW}[migrate] reverting last migration...${NOFORMAT}"

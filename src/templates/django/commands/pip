@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[pip] $*${NOFORMAT}"
-dip exec app "pip $*"
+dip exec app pip "$@"

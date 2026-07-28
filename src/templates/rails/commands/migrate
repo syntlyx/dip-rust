@@ -15,7 +15,7 @@ case "$1" in
   ;;
 *)
   msg "${YELLOW}[migrate] running pending migrations...${NOFORMAT}"
-  dip exec app "bundle exec rails db:migrate $*"
+  dip exec app bundle exec rails db:migrate "$@"
   ;;
 esac
 

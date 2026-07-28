@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[wp] $*${NOFORMAT}"
-dip exec app "wp --allow-root $*"
+dip exec app wp --allow-root "$@"

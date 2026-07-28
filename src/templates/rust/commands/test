@@ -5,4 +5,4 @@ set -e
 source "${DIP_DIR}/commands/utils/color.sh"
 
 msg "${YELLOW}[test] $*${NOFORMAT}"
-dip exec app "cargo test $*"
+dip exec app cargo test "$@"
