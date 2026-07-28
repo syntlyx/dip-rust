@@ -40,3 +40,27 @@ jobs:
 
       - name: cargo test
         run: cargo test --all
+
+  lint-templates:
+    name: Lint template scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: shellcheck
+        run: |
+          find src/templates -type f -exec awk 'FNR==1 && /^#!/{print FILENAME}' {} + \
+            | xargs shellcheck --severity=style --exclude=SC1091
+
+      # shellcheck can't flag `dip exec app "cmd $*"` — quoted "$*" is legal
+      # shell, but for a passthrough wrapper it joins argv into one string
+      # that a container shell re-parses (breaking (), quotes, *). Wrappers
+      # must pass arguments as separate argv: `dip exec app cmd "$@"`.
+      - name: forbid argv-joining exec wrappers
+        run: |
+          bad=$(grep -rnE 'dip exec.*\$\*|dip exec[^"]*"[^"]+ \$\{?@' src/templates || true)
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo '::error::pass args to dip exec as separate argv ("$@"), not joined into one string'
+            exit 1
+          fi
