@@ -45,7 +45,10 @@ pub struct ServiceConfig {
     pub entrypoint: Value,
     #[serde(default)]
     pub working_dir: Option<String>,
-    #[serde(default)]
+    /// `docker compose config` normalizes depends_on into a map
+    /// (`{"db": {"condition": ...}}`); user compose files use the short list
+    /// form. Accept both, keeping just the service names.
+    #[serde(default, deserialize_with = "deserialize_depends_on")]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub healthcheck: Value,
@@ -389,7 +392,14 @@ fn parse_path_list_value(value: &Value, base_dir: &Path) -> Value {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+fn deserialize_depends_on<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(parse_depends_on(&value))
+}
+
 fn parse_depends_on(value: &Value) -> Vec<String> {
     match value {
         Value::Array(items) => items
@@ -675,4 +685,38 @@ services:
         );
     }
 
+    /// `docker compose config --format json` (compose_config::load path)
+    /// normalizes depends_on into a map with conditions — the struct must
+    /// accept it alongside the plain list form used in raw compose files.
+    #[test]
+    fn deserializes_docker_compose_config_json_depends_on_map() {
+        let json = r#"{
+            "name": "backend",
+            "services": {
+                "app": {
+                    "command": null,
+                    "entrypoint": null,
+                    "depends_on": {
+                        "db": {"condition": "service_healthy", "required": true},
+                        "memcached": {"condition": "service_started", "required": true}
+                    },
+                    "environment": {"DOMAIN": "backend.test"},
+                    "networks": {"default": null},
+                    "volumes": [{
+                        "type": "bind", "source": "/src", "target": "/var/www",
+                        "bind": {"create_host_path": true}
+                    }]
+                }
+            }
+        }"#;
+        let config: ComposeConfig = serde_json::from_str(json).unwrap();
+        let app = &config.services["app"];
+        assert_eq!(app.depends_on, vec!["db", "memcached"]);
+        assert_eq!(app.volumes[0].target.as_deref(), Some("/var/www"));
+
+        let short_form: ComposeConfig =
+            serde_json::from_str(r#"{"services": {"app": {"depends_on": ["db", "valkey"]}}}"#)
+                .unwrap();
+        assert_eq!(short_form.services["app"].depends_on, vec!["db", "valkey"]);
+    }
 }

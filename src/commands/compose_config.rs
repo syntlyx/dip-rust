@@ -7,5 +7,6 @@ pub fn load(rt: &Runtime) -> Result<ComposeConfig> {
     let raw = rt
         .compose_capture(&["config", "--format", "json"])
         .context("failed to resolve Compose config")?;
-    serde_json::from_str(&raw).context("failed to parse Compose JSON config")
+    serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("failed to parse Compose JSON config: {e}"))
 }
