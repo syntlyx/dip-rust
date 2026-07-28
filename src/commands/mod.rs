@@ -31,6 +31,7 @@ pub mod stop;
 pub mod sysinfo;
 pub mod top;
 pub mod update;
+pub mod update_commands;
 #[cfg(target_os = "macos")]
 pub mod use_runtime;
 pub mod validate;

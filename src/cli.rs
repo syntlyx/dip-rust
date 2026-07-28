@@ -223,6 +223,9 @@ pub enum Commands {
     Exec {
         /// Service name
         service: String,
+        /// Working directory inside the container
+        #[arg(short = 'w', long = "workdir")]
+        workdir: Option<String>,
         /// Command and arguments to run
         #[arg(required = true, trailing_var_arg = true)]
         command: Vec<String>,
@@ -236,6 +239,18 @@ pub enum Commands {
         /// Arguments passed to the script
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Refresh scaffolded scripts in .dip/commands/ from the embedded templates
+    ///
+    /// Missing scripts are added and outdated ones updated (previous versions
+    /// are saved under .dip/commands.bak/). Custom scripts are never touched.
+    #[allow(clippy::enum_variant_names)]
+    UpdateCommands {
+        /// Template to update from (auto-detected if omitted)
+        template: Option<String>,
+        /// Show what would change without writing anything
+        #[arg(long)]
+        dry_run: bool,
     },
 
     // ── Built-in reverse proxy ─────────────────────────────────────────────

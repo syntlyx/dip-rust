@@ -23,14 +23,20 @@ pub fn run_shell(service: &str, shell_type: &str, verbose: bool, no_color: bool)
     Ok(())
 }
 
-pub fn run_exec(service: &str, command: &[String], verbose: bool, no_color: bool) -> Result<()> {
+pub fn run_exec(
+    service: &str,
+    workdir: Option<&str>,
+    command: &[String],
+    verbose: bool,
+    no_color: bool,
+) -> Result<()> {
     let ctx = Ctx::load(verbose, no_color)?;
 
     if command.is_empty() {
         anyhow::bail!("Please provide a command to execute");
     }
 
-    let args = build_exec_args(service, command);
+    let args = build_exec_args(service, workdir, command);
 
     ctx.out.info(&format!(
         "Running '{}' in '{service}'...",
@@ -57,8 +63,16 @@ pub fn run_exec(service: &str, command: &[String], verbose: bool, no_color: bool
 ///
 /// `-i` keeps stdin open; we omit `-t` because exec is often called from
 /// scripts without a TTY.
-fn build_exec_args(service: &str, command: &[String]) -> Vec<String> {
-    let mut args: Vec<String> = vec!["exec".into(), "-i".into(), service.into()];
+///
+/// `workdir` maps to `docker compose exec -w`; the apple runtime shim
+/// translates it to `container exec --workdir`.
+fn build_exec_args(service: &str, workdir: Option<&str>, command: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = vec!["exec".into(), "-i".into()];
+    if let Some(dir) = workdir {
+        args.push("-w".into());
+        args.push(dir.into());
+    }
+    args.push(service.into());
     if command.len() == 1 && command[0].contains(char::is_whitespace) {
         args.extend(["sh".into(), "-c".into(), command[0].clone()]);
     } else {
@@ -77,7 +91,7 @@ mod tests {
 
     #[test]
     fn passes_command_through_without_shell_wrapper() {
-        let args = build_exec_args("db", &cmd(&["psql", "-U", "postgres"]));
+        let args = build_exec_args("db", None, &cmd(&["psql", "-U", "postgres"]));
         assert_eq!(args, cmd(&["exec", "-i", "db", "psql", "-U", "postgres"]));
         // No `sh -c` wrapper that would re-parse the command.
         assert!(!args.iter().any(|a| a == "sh" || a == "-c"));
@@ -86,7 +100,7 @@ mod tests {
     #[test]
     fn wraps_single_quoted_command_line_in_sh_c() {
         let line = "/var/www/vendor/bin/phpunit -c docroot/core/phpunit.xml.dist docroot/modules/custom/*/tests/src/Unit";
-        let args = build_exec_args("app", &cmd(&[line]));
+        let args = build_exec_args("app", None, &cmd(&[line]));
         // One whitespace-containing arg means the caller quoted a full command
         // line — run it through a shell so words split and globs expand.
         assert_eq!(args, cmd(&["exec", "-i", "app", "sh", "-c", line]));
@@ -94,19 +108,36 @@ mod tests {
 
     #[test]
     fn single_arg_without_whitespace_runs_directly() {
-        let args = build_exec_args("app", &cmd(&["bash"]));
+        let args = build_exec_args("app", None, &cmd(&["bash"]));
         assert_eq!(args, cmd(&["exec", "-i", "app", "bash"]));
     }
 
     #[test]
     fn preserves_sql_argument_with_parentheses_as_single_arg() {
         let sql = "SELECT count(*) FROM users WHERE id IN (1,2,3)";
-        let args = build_exec_args("db", &cmd(&["psql", "-U", "postgres", "-c", sql]));
+        let args = build_exec_args("db", None, &cmd(&["psql", "-U", "postgres", "-c", sql]));
         // The SQL stays a single argv element — parentheses are never seen by a shell.
         assert_eq!(args.last().unwrap(), sql);
         assert_eq!(
             args,
             cmd(&["exec", "-i", "db", "psql", "-U", "postgres", "-c", sql])
+        );
+    }
+
+    #[test]
+    fn workdir_is_inserted_before_service() {
+        let args = build_exec_args("app", Some("/var/www/theme"), &cmd(&["sass", "scss:css"]));
+        assert_eq!(
+            args,
+            cmd(&[
+                "exec",
+                "-i",
+                "-w",
+                "/var/www/theme",
+                "app",
+                "sass",
+                "scss:css"
+            ])
         );
     }
 }

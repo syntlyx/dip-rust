@@ -40,6 +40,14 @@ pub fn run(template: Option<&str>, no_color: bool) -> Result<()> {
 
     apply(&dip_dir, tmpl.map(|t| t.dir), &project_name, &domain)?;
 
+    // Record the template so `dip update-commands` can skip detection later
+    if let Some(t) = tmpl {
+        fs::write(
+            dip_dir.join(crate::commands::update_commands::TEMPLATE_MARKER),
+            t.name,
+        )?;
+    }
+
     // ── summary ───────────────────────────────────────────────────────────────
     println!();
     out.success(&format!("Project '{project_name}' initialized"));

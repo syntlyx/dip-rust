@@ -127,10 +127,17 @@ fn main() {
             shell_type,
         } => commands::shell::run_shell(&service, &shell_type, v, nc),
         Commands::Bash { service } => commands::shell::run_shell(&service, "bash", v, nc),
-        Commands::Exec { service, command } => commands::shell::run_exec(&service, &command, v, nc),
+        Commands::Exec {
+            service,
+            workdir,
+            command,
+        } => commands::shell::run_exec(&service, workdir.as_deref(), &command, v, nc),
 
         // Custom scripts
         Commands::Run { script, args } => commands::run::run(script.as_deref(), &args, v, nc),
+        Commands::UpdateCommands { template, dry_run } => {
+            commands::update_commands::run(template.as_deref(), dry_run, nc)
+        }
 
         // Built-in proxy
         Commands::Proxy(sub) => match sub {
