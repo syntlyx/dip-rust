@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+  schedule:
+    # Weekly RustSec sweep — advisories land between releases too
+    - cron: "0 6 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,6 +43,20 @@ jobs:
 
       - name: cargo test
         run: cargo test --all
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo audit
 
   lint-templates:
     name: Lint template scripts
