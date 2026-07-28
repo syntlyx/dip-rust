@@ -159,6 +159,9 @@ dip exec db psql -U postgres -c "SELECT count(*) FROM users WHERE id IN (1,2,3)"
 
 # For pipes, redirects, or variable expansion, invoke a shell explicitly:
 dip exec app sh -c "ls | wc -l"
+
+# Run in a specific directory inside the container:
+dip exec app -w /var/www/theme sass scss:css
 ```
 
 Project scripts:
@@ -173,6 +176,15 @@ Add a description to a command by placing this near the top of the script:
 
 ```bash
 # Description: Run pending database migrations
+```
+
+Refresh scaffolded scripts after a dip upgrade (custom scripts are never
+touched; the previous version of anything updated is saved under
+`.dip/commands.bak/`):
+
+```bash
+dip update-commands --dry-run   # preview
+dip update-commands             # apply
 ```
 
 ## Environment And Config Checks
