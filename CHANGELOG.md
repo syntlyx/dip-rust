@@ -55,6 +55,11 @@ stability, supply-chain and correctness work.
 
 ### Changed
 
+- **Read-only `ps` queries go straight to the Docker Engine socket**
+  instead of spawning the docker CLI: `dip status`/`health`/`stats` drop
+  from ~105 ms to ~30 ms. Socket discovery: `DOCKER_HOST` →
+  `/var/run/docker.sock` → OrbStack → Docker Desktop → colima; any
+  failure falls back to the docker CLI silently.
 - **Own minimal YAML parser** replaces the `noyalib` dependency for
   compose-file parsing. Covers the compose subset (block maps/sequences,
   scalars with core-schema inference, quotes, comments, multi-line flow

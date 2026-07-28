@@ -166,6 +166,22 @@ impl ContainerRuntime for DockerRuntime {
     }
 
     fn compose_capture(&self, ctx: &BackendCtx, args: &[&str]) -> Result<String> {
+        // Read-only ps queries go straight to the Engine socket when possible —
+        // saves the ~85ms docker CLI spawn on every status/health/stats call.
+        // Any failure silently falls back to the CLI below.
+        if let Some(result) = super::docker_api::try_ps(&ctx.project.project_name, args) {
+            match result {
+                Ok(out) => {
+                    log_verbose(ctx.verbose, "  ps answered via docker socket");
+                    return Ok(out);
+                }
+                Err(e) => log_verbose(
+                    ctx.verbose,
+                    &format!("  socket ps unavailable ({e}); using docker CLI"),
+                ),
+            }
+        }
+
         let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
         let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
         cmd_args.extend_from_slice(args);
