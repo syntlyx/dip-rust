@@ -4,6 +4,10 @@ pub mod notify;
 pub mod output;
 pub mod spinner;
 pub mod style;
+// Only the macOS Apple-runtime path parses compose files itself
+// (`runtime::compose_file::load_project_compose`); elsewhere the module
+// would be dead code. Tests exercise it on every platform.
+#[cfg(any(target_os = "macos", test))]
 pub mod yaml;
 
 use std::path::Path;
