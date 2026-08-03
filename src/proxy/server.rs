@@ -5,7 +5,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::server::conn::http1 as server_http1;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::ServerConfig;
 use tokio::net::TcpListener;
@@ -80,13 +80,16 @@ pub async fn run(config: ProxyConfig) -> Result<()> {
     // Clone routes for the watcher before https_task consumes them via `move`
     let watcher_routes = routes.clone();
 
+    // Decide direct vs SOCKS-via-agent dialing before the first request, and
+    // keep re-probing in the background (see dialer.rs).
+    super::dialer::init().await;
+
     // One shared HTTP/1.1 client for all proxy requests — reuses TCP connections
     // per upstream via keep-alive, avoiding a new TCP handshake on every request.
     // Connect timeout: upstreams are local containers, so if a connect takes
     // seconds the container is gone — fail fast instead of the ~75s OS default.
     // No response timeout on purpose: xdebug sessions hold requests for minutes.
-    let mut connector = HttpConnector::new();
-    connector.set_connect_timeout(Some(std::time::Duration::from_secs(5)));
+    let connector = super::dialer::DipConnector::new(super::upstream::CONNECT_TIMEOUT);
     let http_client: PooledClient =
         Arc::new(Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(connector));
 

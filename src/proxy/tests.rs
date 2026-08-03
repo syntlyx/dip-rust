@@ -66,8 +66,9 @@ async fn spawn_proxy(routes: Routes, connect_timeout: Duration) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut connector = HttpConnector::new();
-    connector.set_connect_timeout(Some(connect_timeout));
+    // The dialer's global probe state is never initialized in tests, so
+    // DipConnector always dials direct here — same as production on Linux.
+    let connector = super::dialer::DipConnector::new(connect_timeout);
     let client: PooledClient =
         Arc::new(Client::builder(TokioExecutor::new()).build::<_, Full<Bytes>>(connector));
 

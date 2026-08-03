@@ -14,7 +14,8 @@ use super::{BoxError, PooledClient, RespBody, box_bytes, box_empty};
 /// Upstream TCP connect budget. Upstreams are local containers: if a connect
 /// takes seconds, the container is gone — fail fast with a clear error
 /// instead of letting the browser hang on the ~75s OS TCP timeout.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Shared with the pooled client's connector (see server.rs).
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Request bodies up to this size are buffered so the pooled client can
 /// safely retry on a stale keep-alive connection. Larger bodies (and chunked
@@ -172,11 +173,12 @@ pub async fn proxy_upgrade(
     Ok(Response::from_parts(resp_parts, box_bytes(resp_bytes)))
 }
 
-/// TCP connect with a hard deadline (see CONNECT_TIMEOUT).
+/// TCP connect with a hard deadline (see CONNECT_TIMEOUT). Dials direct or
+/// through the SOCKS agent depending on what the dialer probe last saw.
 async fn connect_upstream(upstream: &str) -> Result<TcpStream, BoxError> {
-    match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(upstream)).await {
+    match tokio::time::timeout(CONNECT_TIMEOUT, super::dialer::current().connect(upstream)).await {
         Ok(Ok(stream)) => Ok(stream),
-        Ok(Err(e)) => Err(Box::new(e)),
+        Ok(Err(e)) => Err(e),
         Err(_) => Err(format!(
             "connect to {upstream} timed out after {}s (container gone?)",
             CONNECT_TIMEOUT.as_secs()

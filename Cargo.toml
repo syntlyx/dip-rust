@@ -25,6 +25,11 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "tls1
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 rustls-pki-types = "1.9"
 
+# SOCKS5 dialing through the dip macOS agent (rootless access to container
+# networks); tower-service is just the Service trait for the custom connector.
+tokio-socks = "0.5"
+tower-service = "0.3"
+
 # DB migration
 sqlx = { version = "0.9", default-features = false, features = ["mysql", "postgres", "runtime-tokio", "tls-rustls", "time", "rust_decimal", "json"] }
 rust_decimal = "1"

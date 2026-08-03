@@ -174,6 +174,16 @@ fn format_error_chain(err: &(dyn std::error::Error + 'static)) -> String {
 fn proxy_error_hint(detail: &str, upstream: &str) -> Option<String> {
     let lower = detail.to_ascii_lowercase();
 
+    // Must come before the generic "connection refused"/"timed out" branches:
+    // a dead agent also produces those strings, but the fix is different.
+    if lower.contains("socks agent") {
+        return Some(
+            "the connection goes through whalet's SOCKS agent and it failed; \
+             check `whalet status` (or set DIP_SOCKS=off to force direct connects)"
+                .to_string(),
+        );
+    }
+
     if lower.contains("connection refused")
         || lower.contains("os error 61")
         || lower.contains("os error 111")
