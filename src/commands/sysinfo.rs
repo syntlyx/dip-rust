@@ -70,7 +70,7 @@ pub fn run(verbose: bool, no_color: bool) -> Result<()> {
         }
         Err(_) => {
             println!("{}", "─".repeat(60));
-            out.info("Not inside a dip project (no .dip directory found)");
+            out.report("Not inside a dip project (no .dip directory found)");
         }
     }
 

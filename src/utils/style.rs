@@ -32,25 +32,57 @@ static OVERRIDE: AtomicU8 = AtomicU8::new(UNSET);
 /// Lazily computed environment default (`NO_COLOR` + stdout TTY check).
 static ENV_DEFAULT: OnceLock<bool> = OnceLock::new();
 
-/// Force colors on or off globally, overriding the environment default.
-/// Same semantics as `colored::control::set_override`.
-pub fn set_override(enabled: bool) {
+/// Turn colors off for the rest of the process (`--no-color`).
+///
+/// There is deliberately no public "force on": that is what `CLICOLOR_FORCE`
+/// is for, and an unconditional force here is exactly what used to defeat
+/// `NO_COLOR` and put escape codes into redirected output.
+pub fn disable() {
+    OVERRIDE.store(FORCE_OFF, Ordering::Relaxed);
+}
+
+/// Force colors on or off, bypassing the environment default. Tests only —
+/// production code sets at most `disable()`.
+#[cfg(test)]
+fn set_override(enabled: bool) {
     let value = if enabled { FORCE_ON } else { FORCE_OFF };
     OVERRIDE.store(value, Ordering::Relaxed);
 }
 
 /// Whether escape codes should be emitted right now.
 ///
-/// An explicit override always wins; otherwise colors are on when the
-/// `NO_COLOR` env var is absent and stdout is a terminal.
+/// An explicit override (`--no-color`) always wins. Otherwise the usual
+/// environment rules apply, in the order the conventions define:
+///
+/// 1. `NO_COLOR` set to anything — off (no-color.org).
+/// 2. `CLICOLOR_FORCE` / `FORCE_COLOR` — on even when redirected, which is how
+///    you keep colors through `dip status | less -R`.
+/// 3. Otherwise, on only when stdout is a terminal.
+///
+/// One switch decides for both streams, keyed on stdout. Diagnostics go to
+/// stderr, so `dip status > report.txt` from a terminal drops their colour
+/// too — the alternative is escape codes in the file, which is worse.
 fn colors_enabled() -> bool {
     match OVERRIDE.load(Ordering::Relaxed) {
         FORCE_OFF => false,
         FORCE_ON => true,
         _ => *ENV_DEFAULT.get_or_init(|| {
-            std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+            env_default(
+                std::env::var_os("NO_COLOR").is_some(),
+                std::env::var_os("CLICOLOR_FORCE").is_some()
+                    || std::env::var_os("FORCE_COLOR").is_some(),
+                std::io::stdout().is_terminal(),
+            )
         }),
     }
+}
+
+/// The rule above, as a pure function so it can be tested without a terminal.
+fn env_default(no_color: bool, force: bool, stdout_tty: bool) -> bool {
+    if no_color {
+        return false;
+    }
+    force || stdout_tty
 }
 
 // ─── colors ───────────────────────────────────────────────────────────────────
@@ -266,6 +298,19 @@ mod tests {
                 "\x1b[1;96msvc\x1b[0m"
             );
         });
+    }
+
+    #[test]
+    fn no_color_beats_force_which_beats_the_terminal_check() {
+        // NO_COLOR wins outright (no-color.org): set to anything, colors off.
+        assert!(!env_default(true, false, true));
+        assert!(!env_default(true, true, true));
+        // CLICOLOR_FORCE keeps colors through a pipe — `dip status | less -R`.
+        assert!(env_default(false, true, false));
+        // Otherwise it comes down to whether stdout is a terminal, so a
+        // redirect gets clean text instead of escape codes in the file.
+        assert!(env_default(false, false, true));
+        assert!(!env_default(false, false, false));
     }
 
     #[test]

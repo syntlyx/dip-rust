@@ -61,7 +61,7 @@ fn print_table(ctx: &Ctx, project_name: &str, verbose: bool) -> Result<()> {
     println!("{}", "─".repeat(width));
 
     if containers.is_empty() {
-        ctx.out.info("No containers found");
+        ctx.out.report("No containers found");
         println!("{}", "─".repeat(width));
         return Ok(());
     }

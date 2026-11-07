@@ -5,24 +5,49 @@ pub struct Output;
 
 impl Output {
     pub fn new(no_color: bool) -> Self {
-        crate::utils::style::set_override(!no_color);
+        // Only `--no-color` overrides. Forcing colors *on* here (which is what
+        // passing `!no_color` did) made the environment default dead code, so
+        // `NO_COLOR` was ignored and `dip status > report.txt` wrote escape
+        // codes into the file.
+        if no_color {
+            crate::utils::style::disable();
+        }
         Self
     }
 
+    // Progress, confirmations, warnings and errors are diagnostics: they say
+    // what dip is doing, not what the command was asked to produce. They go to
+    // stderr so stdout carries only the payload — `dip exec app pg_dump | gzip`
+    // and `dip status --format json | jq` have to see nothing else. An
+    // interactive user sees both streams on the terminal either way.
+    //
+    // Use `report` for a line that *is* the answer, and `section`/`println!`
+    // for rendered report bodies; both stay on stdout.
+
     pub fn success(&self, message: &str) {
-        println!("{} {}", "✓".green().bold(), message);
+        eprintln!("{} {}", "✓".green().bold(), message);
     }
 
     pub fn info(&self, message: &str) {
-        println!("{} {}", "·".blue(), message.dimmed());
+        eprintln!("{} {}", "·".blue(), message.dimmed());
     }
 
     pub fn warning(&self, message: &str) {
-        println!("{} {}", "⚠".yellow(), message.yellow());
+        eprintln!("{} {}", "⚠".yellow(), message.yellow());
     }
 
     pub fn error(&self, message: &str) {
-        println!("{} {}", "✗".red().bold(), message.red());
+        eprintln!("{} {}", "✗".red().bold(), message.red());
+    }
+
+    /// A line that *is* the command's answer rather than commentary about it.
+    ///
+    /// `dip stats` with nothing running still has an answer — "no running
+    /// containers" — and it belongs on stdout with the rest of the report, so
+    /// that `dip stats > file` records it and a table does not end up framed
+    /// around a gap. Renders like `info`; only the stream differs.
+    pub fn report(&self, message: &str) {
+        println!("{} {}", "·".blue(), message.dimmed());
     }
 
     /// Print a bordered section with a title and body.
@@ -130,4 +155,48 @@ pub fn service_color(name: &str) -> Color {
         .bytes()
         .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
     PALETTE[hash % PALETTE.len()]
+}
+
+// ─── tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    /// Guard the stdout/stderr split at the source level.
+    ///
+    /// The split is only enforceable by reading the code: these helpers write
+    /// to the process's real streams, which a unit test cannot capture without
+    /// redirecting fds for the whole test binary. Asserting on the macro each
+    /// helper uses is the cheap way to keep a future edit from quietly putting
+    /// progress back on stdout, where it lands in the middle of piped data.
+    #[test]
+    fn diagnostics_go_to_stderr_and_payload_to_stdout() {
+        let src = include_str!("output.rs");
+
+        for (name, macro_) in [
+            // Commentary about what dip is doing.
+            ("success", "eprintln!"),
+            ("info", "eprintln!"),
+            ("warning", "eprintln!"),
+            ("error", "eprintln!"),
+            // The command's actual answer.
+            ("report", "println!"),
+        ] {
+            let body = fn_body(src, name);
+            assert!(
+                body.contains(macro_),
+                "Output::{name} must write with {macro_}, got:\n{body}"
+            );
+        }
+    }
+
+    /// Source text of `pub fn <name>` up to the next blank line.
+    fn fn_body<'a>(src: &'a str, name: &str) -> &'a str {
+        let needle = format!("pub fn {name}(&self, message: &str) {{");
+        let start = src
+            .find(&needle)
+            .unwrap_or_else(|| panic!("Output::{name} not found"));
+        let rest = &src[start..];
+        let end = rest.find("\n\n").unwrap_or(rest.len());
+        &rest[..end]
+    }
 }

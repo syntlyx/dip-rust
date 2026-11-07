@@ -58,6 +58,41 @@ jobs:
       - name: cargo audit
         run: cargo audit
 
+  integration:
+    name: Integration (real daemon)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: linux-integration-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-integration-
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      # The runner ships a working daemon; confirm it before blaming dip.
+      - name: Check the daemon is up
+        run: docker version
+
+      - name: Pull the test image
+        run: docker pull alpine:3.20
+
+      # Exercises what unit tests structurally cannot see: whether a command
+      # runs once or twice, whether a TTY reaches the container, whether an
+      # exit code survives the trip.
+      - name: Integration tests
+        run: ./scripts/integration-test.sh target/release/dip
+
   lint-templates:
     name: Lint template scripts
     runs-on: ubuntu-latest
@@ -66,7 +101,7 @@ jobs:
 
       - name: shellcheck
         run: |
-          find src/templates -type f -exec awk 'FNR==1 && /^#!/{print FILENAME}' {} + \
+          find src/templates scripts -type f -exec awk 'FNR==1 && /^#!/{print FILENAME}' {} + \
             | xargs shellcheck --severity=style --exclude=SC1091
 
       # shellcheck can't flag `dip exec app "cmd $*"` — quoted "$*" is legal

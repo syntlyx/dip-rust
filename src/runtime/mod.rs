@@ -3,6 +3,7 @@ pub mod apple;
 pub mod compose_file;
 pub mod docker;
 pub(crate) mod docker_api;
+pub(crate) mod docker_exec;
 
 #[cfg(target_os = "macos")]
 pub use apple::AppleContainerRuntime;

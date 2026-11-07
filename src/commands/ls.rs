@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::utils::style::Stylize;
@@ -29,8 +30,12 @@ pub fn run(root: Option<PathBuf>, no_color: bool) -> Result<()> {
     // 1. Discover projects (fast, single-threaded with pruning)
     let projects = scan(&search_root);
 
+    // One sweep for every running container, instead of a `docker ps` per
+    // project. `None` falls each project back to its own lookup.
+    let counts = crate::runtime::docker_api::running_counts_by_project().ok();
+
     if projects.is_empty() {
-        out.info("No dip projects found");
+        out.report("No dip projects found");
         return Ok(());
     }
 
@@ -38,7 +43,7 @@ pub fn run(root: Option<PathBuf>, no_color: bool) -> Result<()> {
     let mut statuses: Vec<ProjectStatus> = std::thread::scope(|s| {
         projects
             .iter()
-            .map(|p| s.spawn(|| check_status(p)))
+            .map(|p| s.spawn(|| check_status(p, counts.as_ref())))
             .collect::<Vec<_>>()
             .into_iter()
             .filter_map(|h| h.join().ok())
@@ -259,8 +264,8 @@ fn read_project_name(dip_dir: &Path) -> Option<String> {
 
 // ─── runtime status ───────────────────────────────────────────────────────────
 
-fn check_status(project: &DipProject) -> ProjectStatus {
-    let running = running_container_count(&project.name);
+fn check_status(project: &DipProject, counts: Option<&HashMap<String, usize>>) -> ProjectStatus {
+    let running = running_container_count(&project.name, counts);
     ProjectStatus {
         project: DipProject {
             name: project.name.clone(),
@@ -270,8 +275,22 @@ fn check_status(project: &DipProject) -> ProjectStatus {
     }
 }
 
-fn running_container_count(project_name: &str) -> usize {
-    crate::runtime::active_backend().running_count_by_project(project_name)
+/// Containers running for one project.
+///
+/// `counts` is the single API sweep taken up front; without it (no reachable
+/// endpoint, or a runtime that is not Docker) each project falls back to its
+/// own `docker ps`, which is what this used to do for every project.
+fn running_container_count(project_name: &str, counts: Option<&HashMap<String, usize>>) -> usize {
+    match counts {
+        // Labels carry compose's normalized name, not the raw PROJECT_NAME.
+        Some(counts) => counts
+            .get(&crate::runtime::docker_api::normalize_project_name(
+                project_name,
+            ))
+            .copied()
+            .unwrap_or(0),
+        None => crate::runtime::active_backend().running_count_by_project(project_name),
+    }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

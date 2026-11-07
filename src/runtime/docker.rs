@@ -24,6 +24,16 @@ impl ContainerRuntime for DockerRuntime {
     }
 
     fn check_daemon(&self) -> Result<()> {
+        // `/_ping` answers in ~0.4 ms where `docker info` takes ~45 ms, and
+        // this runs before half the `dip db` commands.
+        if super::docker_api::ping() {
+            return Ok(());
+        }
+
+        // The socket said no — which may only mean we cannot speak to this
+        // endpoint (an `https://` or `ssh://` context), not that the daemon is
+        // down. The CLI is the authority, and this path is already an error
+        // path where 45 ms does not matter.
         let ok = Command::new("docker")
             .args(["info"])
             .stdout(Stdio::null())
@@ -102,10 +112,29 @@ impl ContainerRuntime for DockerRuntime {
     }
 
     fn compose_stream(&self, ctx: &BackendCtx, args: &[&str], passthrough: bool) -> Result<i32> {
-        let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
-        let mut cmd_args = vec!["compose", "-f", compose_file.as_str()];
-        cmd_args.extend_from_slice(args);
-
+        // `exec` is the hot path — every `dip exec` / `dip shell` and every
+        // line of every `dip run` script goes through it. Skip the compose
+        // plugin, and where possible the docker CLI too.
+        let cmd_args = match route_exec(ctx, args) {
+            // Already ran; there is no child process to wait on.
+            ExecRoute::Api(result) => {
+                let code = result?;
+                if code != 0 && code != 130 && !passthrough {
+                    anyhow::bail!("docker exec failed (exit {code})");
+                }
+                return Ok(code);
+            }
+            ExecRoute::Cli(direct) => direct,
+            ExecRoute::Compose => {
+                let mut cmd_args = vec![
+                    "compose".to_string(),
+                    "-f".to_string(),
+                    ctx.project.compose_file.to_string_lossy().into_owned(),
+                ];
+                cmd_args.extend(args.iter().map(|a| (*a).to_string()));
+                cmd_args
+            }
+        };
         log_cmd(ctx.verbose, &cmd_args);
 
         let status = Command::new("docker")
@@ -308,8 +337,205 @@ impl ContainerRuntime for DockerRuntime {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-fn log_cmd(verbose: bool, args: &[&str]) {
-    log_verbose(verbose, &format!("  docker {}", args.join(" ")));
+// ─── exec fast path ───────────────────────────────────────────────────────────
+
+/// How a `compose exec` invocation should actually be run.
+enum ExecRoute {
+    /// Already ran against the Engine API — no child process at all.
+    Api(Result<i32>),
+    /// `docker exec` argv, addressing the container by ID.
+    Cli(Vec<String>),
+    /// Hand it back to the compose plugin unchanged.
+    Compose,
+}
+
+/// Route a `compose exec` invocation down the cheapest path that is still
+/// exactly equivalent.
+///
+/// Three tiers, each falling through to the next on any doubt:
+///
+/// 1. **Engine API.** The docker CLI's own startup dominates a short exec —
+///    `docker exec <id> true` measures ~26 ms against a live daemon, of which
+///    only ~13 ms is the daemon running the command. Doing create/start/inspect
+///    ourselves costs ~14 ms, so this lands below the CLI we would otherwise
+///    spawn. Non-TTY only; a TTY needs raw terminal mode and `SIGWINCH`
+///    forwarding, so `dip shell` takes tier 2.
+/// 2. **`docker exec` by container ID.** Skips the compose plugin's extra
+///    startup but still pays for the CLI.
+/// 3. **The compose plugin**, which stays the source of truth for compose
+///    semantics.
+///
+/// Tiers 1 and 2 carry the same environment compose would have: its `exec`
+/// forwards only the command-line `-e`/`--workdir`/`--user` flags to the
+/// Engine's exec API, and never merges the service's compose-file
+/// `environment:` or `working_dir` — those are already baked into the
+/// container, which a direct exec inherits just the same.
+///
+/// The flags are *not* spelled the same, though. `compose exec` allocates a
+/// pseudo-TTY unless told otherwise (`-T`), where `docker exec` and the API
+/// allocate one only when asked — so a bare `-i` means "TTY" to compose and
+/// "no TTY" here. Callers therefore pass `-t` explicitly (see
+/// `commands::shell::build_exec_args`); the parser below only reads what it is
+/// given, and any `-t` sends the exec to tier 2.
+fn route_exec(ctx: &BackendCtx, args: &[&str]) -> ExecRoute {
+    let Some(plan) = ExecPlan::parse(args) else {
+        return ExecRoute::Compose;
+    };
+
+    // Resolved once and reused: finding the endpoint reads the docker config
+    // and scans the context metadata, and both the container lookup and the
+    // exec itself need it.
+    let Some(endpoint) = super::docker_api::find_endpoint() else {
+        log_verbose(ctx.verbose, "  no reachable docker endpoint; using compose");
+        return ExecRoute::Compose;
+    };
+
+    let id = match super::docker_api::container_id_at(
+        &endpoint,
+        &ctx.project.project_name,
+        plan.service,
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            log_verbose(
+                ctx.verbose,
+                &format!("  exec via socket unavailable ({e}); using compose"),
+            );
+            return ExecRoute::Compose;
+        }
+    };
+
+    if !plan.tty {
+        use super::docker_exec::Attempt;
+        match super::docker_exec::run(&endpoint, &plan.to_spec(&id)) {
+            Attempt::Ran(result) => {
+                log_verbose(ctx.verbose, "  exec ran over the docker API");
+                // Ran, for better or worse. Falling back now would execute the
+                // command a second time.
+                return ExecRoute::Api(result);
+            }
+            Attempt::NotStarted(e) => log_verbose(
+                ctx.verbose,
+                &format!("  exec over the API did not start ({e}); using the docker CLI"),
+            ),
+        }
+    }
+
+    log_verbose(ctx.verbose, "  exec addressed container directly");
+    ExecRoute::Cli(plan.to_cli_args(&id))
+}
+
+/// A `compose exec` invocation, parsed into what it actually asks for.
+struct ExecPlan<'a> {
+    interactive: bool,
+    tty: bool,
+    privileged: bool,
+    env: Vec<&'a str>,
+    user: Option<&'a str>,
+    workdir: Option<&'a str>,
+    service: &'a str,
+    command: &'a [&'a str],
+}
+
+impl<'a> ExecPlan<'a> {
+    /// Only flags that mean the same thing to a direct exec as to `compose
+    /// exec` are accepted. `--index`, `-d` and friends are compose-specific or
+    /// change which container is picked, so they bail out to compose.
+    fn parse(args: &'a [&'a str]) -> Option<Self> {
+        let ["exec", rest @ ..] = args else {
+            return None;
+        };
+        let mut plan = Self {
+            interactive: false,
+            tty: false,
+            privileged: false,
+            env: Vec::new(),
+            user: None,
+            workdir: None,
+            service: "",
+            command: &[],
+        };
+        let mut i = 0;
+        while i < rest.len() {
+            match rest[i] {
+                "-i" | "--interactive" => plan.interactive = true,
+                "-t" | "--tty" => plan.tty = true,
+                "-it" | "-ti" => {
+                    plan.interactive = true;
+                    plan.tty = true;
+                }
+                "--privileged" => plan.privileged = true,
+                "-e" | "--env" => {
+                    plan.env.push(rest.get(i + 1)?);
+                    i += 1;
+                }
+                "-u" | "--user" => {
+                    plan.user = Some(rest.get(i + 1)?);
+                    i += 1;
+                }
+                "-w" | "--workdir" => {
+                    plan.workdir = Some(rest.get(i + 1)?);
+                    i += 1;
+                }
+                unknown if unknown.starts_with('-') => return None,
+                service => {
+                    plan.service = service;
+                    plan.command = &rest[i + 1..];
+                    return Some(plan);
+                }
+            }
+            i += 1;
+        }
+        None // flags but no service — let compose report it
+    }
+
+    fn to_spec(&self, container_id: &'a str) -> super::docker_exec::ExecSpec<'a> {
+        super::docker_exec::ExecSpec {
+            container_id,
+            command: self.command.iter().map(|a| (*a).to_string()).collect(),
+            env: self.env.iter().map(|e| (*e).to_string()).collect(),
+            user: self.user,
+            workdir: self.workdir,
+            privileged: self.privileged,
+            interactive: self.interactive,
+        }
+    }
+
+    fn to_cli_args(&self, container_id: &str) -> Vec<String> {
+        let mut out = vec!["exec".to_string()];
+        if self.interactive {
+            out.push("-i".into());
+        }
+        if self.tty {
+            out.push("-t".into());
+        }
+        if self.privileged {
+            out.push("--privileged".into());
+        }
+        for env in &self.env {
+            out.push("-e".into());
+            out.push((*env).to_string());
+        }
+        if let Some(user) = self.user {
+            out.push("-u".into());
+            out.push(user.to_string());
+        }
+        if let Some(workdir) = self.workdir {
+            out.push("-w".into());
+            out.push(workdir.to_string());
+        }
+        out.push(container_id.to_string());
+        out.extend(self.command.iter().map(|a| (*a).to_string()));
+        out
+    }
+}
+
+fn log_cmd<S: AsRef<str>>(verbose: bool, args: &[S]) {
+    if !verbose {
+        return;
+    }
+    let joined = args.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(" ");
+    log_verbose(verbose, &format!("  docker {joined}"));
 }
 
 fn is_env_warning(line: &str) -> bool {
@@ -317,14 +543,12 @@ fn is_env_warning(line: &str) -> bool {
 }
 
 fn docker_db_services(ctx: &BackendCtx) -> Result<Vec<DbService>> {
-    let compose_file = ctx.project.compose_file.to_string_lossy().into_owned();
+    // Through `compose_capture`, so this `ps -q` takes the Engine API fast
+    // path like every other one. Spawning the compose plugin here cost ~40 ms
+    // for a query the socket answers in ~4 ms.
+    let ps_out = DockerRuntime.compose_capture(ctx, &["ps", "-q"])?;
 
-    let ps_out = Command::new("docker")
-        .args(["compose", "-f", &compose_file, "ps", "-q"])
-        .envs(ctx.project.get_env())
-        .output()?;
-
-    let ids: Vec<&str> = std::str::from_utf8(&ps_out.stdout)?
+    let ids: Vec<&str> = ps_out
         .lines()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -714,4 +938,106 @@ fn docker_system_info() -> Result<RuntimeSystemInfo> {
             None
         },
     })
+}
+
+// ─── tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse and render as the `docker exec` argv it would run.
+    fn cli(args: &[&str]) -> Option<Vec<String>> {
+        ExecPlan::parse(args).map(|p| p.to_cli_args("CID"))
+    }
+
+    fn words(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn translates_the_exec_shapes_dip_emits() {
+        // `dip exec app <cmd>`
+        assert_eq!(
+            cli(&["exec", "-i", "app", "php", "artisan"]).unwrap(),
+            words(&["exec", "-i", "CID", "php", "artisan"])
+        );
+        // `dip shell app`
+        assert_eq!(
+            cli(&["exec", "-it", "app", "bash"]).unwrap(),
+            words(&["exec", "-i", "-t", "CID", "bash"])
+        );
+        // `dip exec -w <dir> app <cmd>` — the value stays attached to its flag.
+        assert_eq!(
+            cli(&["exec", "-i", "-w", "/var/www/theme", "app", "sass"]).unwrap(),
+            words(&["exec", "-i", "-w", "/var/www/theme", "CID", "sass"])
+        );
+        // The db console path: -e pairs before the service.
+        assert_eq!(
+            cli(&["exec", "-e", "PGPASSWORD=secret", "-it", "db", "psql"]).unwrap(),
+            words(&["exec", "-i", "-t", "-e", "PGPASSWORD=secret", "CID", "psql"])
+        );
+    }
+
+    #[test]
+    fn only_a_tty_request_is_kept_off_the_api_path() {
+        // No -t: the API can run it.
+        let plan = ExecPlan::parse(&["exec", "-i", "app", "ls"]).unwrap();
+        assert!(!plan.tty && plan.interactive);
+        // -it: needs raw terminal handling, so the CLI runs it.
+        let plan = ExecPlan::parse(&["exec", "-it", "app", "bash"]).unwrap();
+        assert!(plan.tty && plan.interactive);
+    }
+
+    #[test]
+    fn the_api_spec_carries_the_same_flags_as_the_cli_argv() {
+        let plan = ExecPlan::parse(&[
+            "exec", "-i", "-u", "www", "-w", "/srv", "-e", "A=1", "app", "ls",
+        ])
+        .unwrap();
+        let spec = plan.to_spec("CID");
+        assert_eq!(spec.container_id, "CID");
+        assert_eq!(spec.command, words(&["ls"]));
+        assert_eq!(spec.env, words(&["A=1"]));
+        assert_eq!(spec.user, Some("www"));
+        assert_eq!(spec.workdir, Some("/srv"));
+        assert!(spec.interactive && !spec.privileged);
+    }
+
+    #[test]
+    fn a_service_name_that_looks_like_a_flag_value_is_not_eaten() {
+        // "-w" consumes exactly one value; the next bare word is the service.
+        let plan = ExecPlan::parse(&["exec", "-w", "app", "app", "ls"]).unwrap();
+        assert_eq!(plan.service, "app");
+        assert_eq!(plan.workdir, Some("app"));
+        assert_eq!(plan.command, ["ls"]);
+    }
+
+    #[test]
+    fn command_arguments_are_never_reinterpreted_as_flags() {
+        // Flags after the service belong to the command, not to docker exec.
+        let sql = "SELECT 1";
+        let args = ["exec", "-i", "db", "psql", "-c", sql, "--quiet"];
+        assert_eq!(
+            cli(&args).unwrap(),
+            words(&["exec", "-i", "CID", "psql", "-c", sql, "--quiet"])
+        );
+    }
+
+    #[test]
+    fn compose_only_flags_fall_back_to_the_compose_plugin() {
+        // --index picks a replica; only compose knows the ordering.
+        assert!(cli(&["exec", "--index", "2", "app", "ls"]).is_none());
+        // -d detaches; compose and docker disagree on the resulting stdio.
+        assert!(cli(&["exec", "-d", "app", "ls"]).is_none());
+        // -T (compose's "no TTY") has no docker exec spelling.
+        assert!(cli(&["exec", "-T", "app", "ls"]).is_none());
+        // A flag whose value is missing, and a flag list with no service.
+        assert!(cli(&["exec", "-w"]).is_none());
+        assert!(cli(&["exec", "-i"]).is_none());
+        // Anything that isn't exec at all.
+        assert!(cli(&["up", "-d"]).is_none());
+        assert!(cli(&["logs", "-f", "app"]).is_none());
+        assert!(cli(&[]).is_none());
+    }
 }

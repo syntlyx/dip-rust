@@ -1,13 +1,13 @@
 [package]
 name = "dip"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
 libc = "0.2"
-clap = { version = "4.5", features = ["derive"] }
-clap_complete = "4.5"
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = "4.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rcgen = { version = "0.14", features = ["x509-parser"] }
@@ -16,14 +16,14 @@ time = { version = "0.3", features = ["std", "formatting", "macros"] }
 
 # Proxy server (HTTP/1.1 only — no h2: a local dev proxy doesn't need it
 # and dropping it removes the whole h2 stack from the binary)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "process", "signal", "sync", "time"] }
 hyper = { version = "1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-rustls-pki-types = "1.9"
+rustls-pki-types = "1.15"
 
 # SOCKS5 dialing through the dip macOS agent (rootless access to container
 # networks); tower-service is just the Service trait for the custom connector.
@@ -37,6 +37,10 @@ futures = "0.3"
 
 # Template embedding
 include_dir = "0.7"
+
+# Peeking inside a gzipped dump to see what was actually compressed
+# (rust_backend = miniz_oxide, no C toolchain needed)
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 tempfile = "3"

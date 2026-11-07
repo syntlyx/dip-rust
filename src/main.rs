@@ -16,6 +16,21 @@ use crate::utils::style::Stylize;
 use clap::Parser;
 use cli::{BenchCommands, Cli, Commands, DbCommands, EnvCommands, ExplainCommands, ProxyCommands};
 
+/// Adopt a container command's exit code as our own.
+///
+/// Anything that runs a command inside a container is a pass-through: the
+/// caller — a shell, a `dip run` script, CI — has to be able to tell that the
+/// command failed. Exiting here rather than returning keeps the error printer
+/// below for real dip errors only, so a failing command does not also get an
+/// "✗" line it never produced.
+fn exit_with(result: anyhow::Result<i32>) -> anyhow::Result<()> {
+    match result {
+        Ok(0) => Ok(()),
+        Ok(code) => std::process::exit(code),
+        Err(e) => Err(e),
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let v = cli.verbose;
@@ -121,17 +136,26 @@ fn main() {
         Commands::Top { service } => commands::top::run(service, v, nc),
         Commands::Health => commands::health::run(v, nc),
 
-        // Shell
+        // Shell — the container command's exit code is ours to return, so a
+        // failing `dip exec app phpunit` fails the script that called it.
         Commands::Shell {
             service,
             shell_type,
-        } => commands::shell::run_shell(&service, &shell_type, v, nc),
-        Commands::Bash { service } => commands::shell::run_shell(&service, "bash", v, nc),
+        } => exit_with(commands::shell::run_shell(&service, &shell_type, v, nc)),
+        Commands::Bash { service } => {
+            exit_with(commands::shell::run_shell(&service, "bash", v, nc))
+        }
         Commands::Exec {
             service,
             workdir,
             command,
-        } => commands::shell::run_exec(&service, workdir.as_deref(), &command, v, nc),
+        } => exit_with(commands::shell::run_exec(
+            &service,
+            workdir.as_deref(),
+            &command,
+            v,
+            nc,
+        )),
 
         // Custom scripts
         Commands::Run { script, args } => commands::run::run(script.as_deref(), &args, v, nc),
@@ -176,11 +200,7 @@ fn main() {
                 commands::db::run_migrate(&from, &to, tables.as_deref(), v, nc)
             }
             DbCommands::Console { service } => {
-                match commands::db::run_console(service.as_deref(), v, nc) {
-                    Ok(code) if code != 0 => std::process::exit(code),
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(e),
-                }
+                exit_with(commands::db::run_console(service.as_deref(), v, nc))
             }
         },
 

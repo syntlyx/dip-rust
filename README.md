@@ -271,12 +271,19 @@ dip db console
 dip db console --service db
 
 dip db dump ./backup.sql
-dip db dump ./backup.sql.gz
+dip db dump ./backup.sql.gz     # a .gz name compresses the dump
 dip db import ./backup.sql
+dip db import ./backup.sql.gz   # gunzipped inside the container
 
 dip db migrate --from mysql --to postgres
 dip db migrate --from mysql --to postgres --tables users,orders
 ```
+
+Import takes plain SQL and gzipped SQL, and reads the format from the file's
+contents rather than its name — so a gzipped dump named `.sql` still works.
+Anything it cannot stream into `psql`/`mysql` is rejected up front with the
+command that unpacks it: archives (`tar`, `tar.gz`, `zip`), other compressors
+(`zstd`, `bzip2`, `xz`, `lz4`), and `pg_dump`'s custom format.
 
 Migration streams rows in chunks, so memory use stays bounded. It handles schema,
 data, indexes, foreign keys, and sequences for common MySQL/PostgreSQL projects.

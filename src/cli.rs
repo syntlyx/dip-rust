@@ -401,17 +401,20 @@ pub enum DbCommands {
         #[arg(long, value_name = "FORMAT")]
         format: Option<String>,
     },
-    /// Export the project database to a dump file
+    /// Export the project database to a dump file (plain SQL, or gzipped with a .gz name)
     Dump {
-        /// Output file path
+        /// Output file path — a .gz suffix compresses the dump (e.g. backup.sql.gz)
         output_path: PathBuf,
         /// Service name when multiple DB services are defined (e.g. --service mysql)
         #[arg(short, long)]
         service: Option<String>,
     },
-    /// Import a database dump into the project database
+    /// Import a plain SQL or gzipped SQL dump into the project database
     Import {
-        /// Input file path (.sql)
+        /// Input file: plain SQL or gzipped SQL. The format is read from the
+        /// file's contents, not its name. Archives (tar, tar.gz, zip), other
+        /// compressors (zstd, bzip2, xz, lz4) and pg_dump's custom format are
+        /// rejected with instructions — unpack them to plain SQL first.
         input_path: PathBuf,
         /// Service name when multiple DB services are defined (e.g. --service mysql)
         #[arg(short, long)]

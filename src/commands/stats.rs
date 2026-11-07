@@ -41,7 +41,7 @@ pub fn run(service: Option<String>, verbose: bool, no_color: bool) -> Result<()>
         .collect();
 
     if ids.is_empty() {
-        ctx.out.info("No running containers for this project");
+        ctx.out.report("No running containers for this project");
         return Ok(());
     }
 

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{DbBackend, DbConfig, exec_dump, exec_import, is_gzipped};
+use super::{DbBackend, DbConfig, DumpFormat, exec_dump, exec_import, gzip_output_requested};
 use crate::runtime::container_exec_command;
 use crate::utils::output::Output;
 
@@ -43,7 +43,7 @@ impl DbBackend for MySqlBackend {
             output_path.display()
         ));
 
-        let gz = is_gzipped(output_path);
+        let gz = gzip_output_requested(output_path);
         let env_pairs = vec![("MYSQL_PWD".to_string(), config.password.clone())];
         let runtime = runtime.to_string();
         let cid = container_id.to_string();
@@ -93,31 +93,26 @@ impl DbBackend for MySqlBackend {
 
         exec_import(
             input_path,
-            move |gz| {
+            move |dump_format| {
                 let setup = "SET SESSION autocommit=0; SET SESSION unique_checks=0; \
                              SET SESSION foreign_key_checks=0; SET SESSION sql_log_bin=0;"
                     .to_string();
-                let command_args = if gz {
-                    vec![
-                        "sh".to_string(),
-                        "-c".to_string(),
-                        "{ printf '%s\\n' \"$3\"; gunzip -c; printf '\\nCOMMIT;\\n'; } | mysql -u\"$1\" \"$2\"".to_string(),
-                        "sh".to_string(),
-                        user,
-                        db,
-                        setup,
-                    ]
-                } else {
-                    vec![
-                        "sh".to_string(),
-                        "-c".to_string(),
-                        "{ printf '%s\\n' \"$3\"; cat; printf '\\nCOMMIT;\\n'; } | mysql -u\"$1\" \"$2\"".to_string(),
-                        "sh".to_string(),
-                        user,
-                        db,
-                        setup,
-                    ]
+                // Only the reader in the middle of the pipe differs.
+                let reader = match dump_format {
+                    DumpFormat::GzipSql => "gunzip -c",
+                    DumpFormat::Sql => "cat",
                 };
+                let command_args = vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    format!(
+                        "{{ printf '%s\\n' \"$3\"; {reader}; printf '\\nCOMMIT;\\n'; }} | mysql -u\"$1\" \"$2\""
+                    ),
+                    "sh".to_string(),
+                    user,
+                    db,
+                    setup,
+                ];
                 container_exec_command(&runtime, &cid, &env_pairs, true, &command_args)
             },
             out,

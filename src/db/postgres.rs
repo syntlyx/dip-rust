@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{DbBackend, DbConfig, exec_dump, exec_import, is_gzipped};
+use super::{DbBackend, DbConfig, DumpFormat, exec_dump, exec_import, gzip_output_requested};
 use crate::runtime::container_exec_command;
 use crate::utils::output::Output;
 
@@ -41,7 +41,7 @@ impl DbBackend for PostgresBackend {
             output_path.display()
         ));
 
-        let gz = is_gzipped(output_path);
+        let gz = gzip_output_requested(output_path);
         let env_pairs = vec![("PGPASSWORD".to_string(), config.password.clone())];
         let runtime = runtime.to_string();
         let cid = container_id.to_string();
@@ -91,25 +91,24 @@ impl DbBackend for PostgresBackend {
 
         exec_import(
             input_path,
-            move |gz| {
-                let command_args = if gz {
+            move |dump_format| {
+                let command_args = match dump_format {
                     // Pipe requires sh -c; password is in -e (not in the shell string).
-                    vec![
+                    DumpFormat::GzipSql => vec![
                         "sh".to_string(),
                         "-c".to_string(),
                         "gunzip -c | psql -U \"$1\" -d \"$2\"".to_string(),
                         "sh".to_string(),
                         user,
                         db,
-                    ]
-                } else {
-                    vec![
+                    ],
+                    DumpFormat::Sql => vec![
                         "psql".to_string(),
                         "-U".to_string(),
                         user,
                         "-d".to_string(),
                         db,
-                    ]
+                    ],
                 };
                 container_exec_command(&runtime, &cid, &env_pairs, true, &command_args)
             },

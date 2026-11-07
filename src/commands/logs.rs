@@ -40,9 +40,12 @@ pub fn run(
             ctx.rt.project.project_name.bold()
         ),
     };
-    println!("{}", "─".repeat(50));
-    println!("{header}");
-    println!("{}", "─".repeat(50));
+    // The whole header is decoration around the log stream, so it goes to
+    // stderr: `dip logs app > app.log` and `dip logs app | grep ERROR` have to
+    // see container output and nothing else.
+    eprintln!("{}", "─".repeat(50));
+    eprintln!("{header}");
+    eprintln!("{}", "─".repeat(50));
 
     // Show available services if no specific one requested.
     #[allow(clippy::collapsible_if)]
@@ -58,8 +61,8 @@ pub fn run(
                     .iter()
                     .map(|s| s.color(service_color(s)).bold().to_string())
                     .collect();
-                println!("  {}", colored.join("  "));
-                println!("{}", "─".repeat(50));
+                eprintln!("  {}", colored.join("  "));
+                eprintln!("{}", "─".repeat(50));
             }
         }
     }
@@ -81,8 +84,8 @@ pub fn run(
     if let Some(ref kws) = keywords {
         // Print active filters in the header.
         let active = active_label(grep.as_deref(), errors, warn, sql, http, slow);
-        println!("  {} {}", "filter:".dimmed(), active.yellow().bold());
-        println!("{}", "─".repeat(50));
+        eprintln!("  {} {}", "filter:".dimmed(), active.yellow().bold());
+        eprintln!("{}", "─".repeat(50));
         ctx.out.info("Ctrl+C to exit");
         let kw_refs: Vec<&str> = kws.iter().map(String::as_str).collect();
         ctx.rt.compose_stream_grep(&args, &kw_refs)?;

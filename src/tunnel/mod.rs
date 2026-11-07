@@ -14,6 +14,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use crate::utils::output::Output;
+use crate::utils::style::Stylize;
 
 const SSH_HOST: &str = "localhost.run";
 const SSH_USER: &str = "nokey";
@@ -49,7 +50,10 @@ pub async fn run_tunnel(upstream: &str, out: &Output) -> Result<()> {
             line = lines.next_line() => match line {
                 Ok(Some(line)) => {
                     if let Some(url) = extract_url(&line) {
-                        out.success(&format!("  Public URL: {url}"));
+                        // The URL is the whole point of `dip share`, so it goes
+                        // to stdout even though it reads like a success notice —
+                        // `dip share 8080 | grep -o 'https://[^ ]*'` has to work.
+                        println!("{}   Public URL: {url}", "✓".green().bold());
                         url_seen = true;
                     } else if !line.trim().is_empty() {
                         println!("  {line}");

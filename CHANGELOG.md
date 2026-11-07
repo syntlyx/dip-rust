@@ -1,6 +1,199 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.1 — unreleased
+
+Performance and correctness on the exec path: `dip exec` now talks to the
+Docker Engine API directly, and several long-standing pass-through bugs
+around it — swallowed exit codes, chatter on stdout — are fixed.
+
+### Changed
+
+- **The daemon check and `dip ls` stopped shelling out.** `check_daemon()`
+  ran `docker info` (~32 ms) purely to learn whether the daemon answers;
+  `GET /_ping` answers the same question in ~0.4 ms, and it runs ahead of
+  six `dip db` subcommands plus `remove`, `prune` and `sysinfo`. `dip ls`
+  ran one `docker ps --filter` per discovered project (~11 ms each, in a
+  thread apiece); one `/containers/json` sweep (~0.5 ms) now returns every
+  running container and the per-project tally is done here — so the cost no
+  longer grows with the number of projects. `dip ls` produces correct
+  counts with no `docker` binary on `PATH` at all.
+
+  `dip db list` also spawned the compose plugin directly for its `ps -q`,
+  bypassing the fast path every other `ps` already used. Routed through it,
+  the command drops from ~135 ms to ~30 ms; the remaining `docker inspect`
+  (~22 ms) stays, because it reads container environment that the list
+  endpoint does not carry.
+
+  Every one of these falls back to the CLI when the API is unreachable.
+
+- **`dip exec` runs against the Docker Engine API directly** — no compose
+  plugin, and no docker CLI either. The CLI's own startup dominates a
+  short exec: `docker exec <id> true` measures ~23 ms against a live
+  daemon, of which only ~13 ms is the daemon running the command. Doing
+  create/start/inspect ourselves costs ~14 ms, so dip lands below the
+  CLI it used to wrap. Measured on macOS + Docker 29.8, 60 interleaved
+  samples on a loaded desktop (minimum, the cleanest signal — medians
+  ran 5-7 ms higher across the board):
+
+  | | min | median |
+  |---|---|---|
+  | `dip exec app true` | **19.1 ms** | **26.1 ms** |
+  | `docker exec <id> true` | 22.7 ms | 27.5 ms |
+  | `docker compose exec -i app true` | 36.7 ms | 39.4 ms |
+
+  Three tiers: the Engine API, then `docker exec` addressing the container
+  by ID, then the compose plugin, which stays the source of truth for
+  compose semantics. A scaled or stopped service, a compose-only flag
+  (`--index`, `-d`, `-T`) or an unreachable API falls back to the next
+  tier.
+
+  Falling back stops the moment the daemon has been told to start the
+  command: from that point a failure is reported rather than retried,
+  because retrying would run the command *twice*. Losing the connection
+  while reading the output of `php artisan migrate` must not run the
+  migration again. Relatedly, `dip exec app … | head` closing our stdout
+  early is an ordinary end to a pipeline, not a failure — dip stops and
+  exits 141, exactly as `docker exec … | head` does.
+
+  **Anything wanting a pseudo-TTY takes tier 2** — `dip shell`, `dip bash`,
+  and `dip exec` run straight from a terminal. A TTY exec also needs raw
+  terminal mode and `SIGWINCH` forwarding, which the API path does not do;
+  it still skips the compose plugin, so ~26 ms rather than ~39 ms. The
+  full API speedup applies where it compounds: `dip run` scripts, CI, and
+  anything piped or redirected.
+
+  The tiers carry the same environment compose would have — its `exec`
+  forwards only the command-line `-e`/`--workdir`/`--user` flags to the
+  Engine API and never merges the service's compose-file `environment:`
+  or `working_dir`, which are already baked into the container. The
+  *flags* differ, though, and this is the one place the translation is
+  not literal: `compose exec` allocates a pseudo-TTY unless given `-T`,
+  while `docker exec` and the API allocate one only when asked, so a bare
+  `-i` means "TTY" to compose and "no TTY" to them. dip now asks for `-t`
+  explicitly whenever both stdin and stdout are terminals — without it,
+  every tool that colorizes on `isatty(stdout)` (phpunit, phpcs,
+  composer, npm) silently loses its colours.
+
+  Requesting the TTY only when it can actually work also drops a compose
+  failure mode: compose refuses a piped stdin with a TTY-enabled
+  container ("cannot attach stdin to a TTY-enabled container"), so
+  `echo "select 1" | dip exec db psql` failed from a terminal. It runs
+  now.
+
+  Verified byte-for-byte against `docker exec` for a 5 MB stdin
+  round-trip and a 5 MB stdout stream, and across all four
+  stdin/stdout terminal-vs-pipe combinations.
+
+### Fixed
+
+- **`dip db import` fed archives to the database client as if they were SQL.**
+  The format came from the file name — anything ending in `.gz` went
+  through `gunzip -c`, everything else straight to `psql`/`mysql`. So
+  `backup.tar.gz` matched the `.gz` rule, decompressed to raw tar bytes,
+  and handed *those* to the client: a wall of syntax errors partway
+  through, and a half-applied dump rather than a refusal. The format is
+  now read from the file's leading bytes, gzip included — its contents
+  are inflated and sniffed too, which is the only way to tell a gzipped
+  SQL dump from a gzipped tarball. A gzipped dump named `.sql` therefore
+  imports correctly as well.
+
+  What it cannot stream is now named and rejected before anything reaches
+  the database, with the command that unpacks it: `tar`, `tar.gz` and
+  `zip` archives, `zstd`/`bzip2`/`xz`/`lz4` compression, `pg_dump`'s
+  custom format (pointing at `pg_restore`), truncated gzip streams, empty
+  files, and binary data that is no recognized format at all. `dip db
+  dump` still picks compression from the output name, which is the only
+  signal available before the file exists — and the one the user chose.
+
+- **dip coloured its output even when redirected, and ignored `NO_COLOR`.**
+  `Output::new` force-enabled colours on every run, which made the
+  module's own environment rules dead code — so `dip status > report.txt`
+  wrote ANSI escape codes into the file and `NO_COLOR=1` had no effect,
+  despite being documented as honoured. Colours are now on only when
+  stdout is a terminal; `NO_COLOR` turns them off, and
+  `CLICOLOR_FORCE`/`FORCE_COLOR` keep them through a pipe
+  (`dip status | less -R`). `--no-color` is unchanged.
+
+- **The Engine API fast path could answer from the wrong daemon.**
+  Socket discovery ignored `docker context`, so a machine with an active
+  non-default context (OrbStack, Colima, a remote host) and a leftover
+  `/var/run/docker.sock` from another engine would have `dip status`
+  reporting one daemon's containers while every other command talked to
+  another. Discovery now follows the CLI's own precedence — `DOCKER_HOST`
+  → `DOCKER_CONTEXT` → `currentContext` in `~/.docker/config.json` →
+  default — and an override it cannot use (`https://`, `ssh://`, a
+  missing socket) falls back to the CLI instead of guessing a local
+  socket. `tcp://` and `http://` endpoints are now spoken directly, so
+  context-based and remote daemons get the fast path too.
+- **Projects whose name needed normalizing showed as empty.** Compose
+  labels containers with the project name lowercased *and* stripped of
+  everything outside `[a-z0-9_-]`; the API fast path only lowercased it.
+  A project in a directory like `My.App` or `client site` matched no
+  label, and because the filter is applied server-side the daemon
+  answered "no containers" rather than failing — so `dip status` printed
+  an empty table instead of falling back. The normalization now matches
+  compose's.
+- Reaching an unreachable daemon no longer burns the full 2 s request
+  budget before falling back: connecting has its own 300 ms limit.
+- **`dip exec` and `dip shell` always exited 0.** The container command's
+  exit code was read and then discarded, so `dip exec app phpunit`
+  reported success however the tests went — and any CI step or `dip run`
+  script built on it silently passed. Both now exit with the command's
+  own code, as `dip db console` already did.
+- **dip's own chatter went to stdout, landing in the middle of piped
+  data.** `dip exec app pg_dump | gzip` got a `· Running '…'` line mixed
+  into the dump, and `dip logs app > app.log` got a banner, separators,
+  a service list and `· Ctrl+C to exit` above the log lines. Progress,
+  confirmations, warnings and errors now go to stderr — where docker,
+  compose and the existing spinner already put theirs — and stdout
+  carries only the payload. Interactive output is unchanged; both
+  streams still reach the terminal.
+
+  What stays on stdout is what the command was asked to produce: every
+  rendered report (`status`, `health`, `env`, `ls`, `db list`, `cert`,
+  `sysinfo`, `doctor`, `validate`…), the `--format json` output, the
+  path from `dip root`, the container's own output from `dip exec` and
+  `dip logs`, and the public URL from `dip share` — which reads like a
+  success notice but is the whole point of the command, so
+  `dip share 8080 | grep -o 'https://[^ ]*'` keeps working. "Nothing
+  found" answers (`dip status` with no containers, `dip ls` with no
+  projects, `dip stats` with nothing running) stay on stdout too, so a
+  redirect records them instead of leaving a table framed around a gap.
+  A unit test pins which helper writes to which stream.
+- **`dip shell`'s fallback to `sh` never ran.** The check tested for an
+  `Err` that a passthrough stream never returns, so `dip shell` on an
+  image without bash just failed. It now retries with `sh` on exit code
+  126/127 — the shell reporting itself missing or not executable.
+
+### Internal
+
+- **Integration tests against a real daemon** (`scripts/integration-test.sh`,
+  run by a new CI job on `ubuntu-latest`). Nineteen checks covering what
+  unit tests structurally cannot see: whether a command runs once or twice,
+  whether a TTY reaches the container, whether an exit code survives the
+  trip, whether piped stdout stays free of dip's own output. Every serious
+  bug fixed in this release was runtime-only and would have shipped
+  otherwise. The suite was verified by reintroducing the double-execution
+  bug and confirming it fails (`expected: 1, actual: 2`). It creates a
+  throwaway alpine project and removes it, leaving nothing behind.
+
+- Dependency refresh clearing `cargo audit`: `rust_decimal` 1.42.1 →
+  1.43.0 drops its optional `rkyv` 0.7 (RUSTSEC-2026-0235 — an advisory
+  against a crate that was in `Cargo.lock` but never actually compiled,
+  since `Cargo.lock` records optional dependencies regardless of feature
+  activation), and `chacha20` 0.10.1 → 0.10.2 leaves the yanked release.
+  269 → 258 crate dependencies. Every direct dependency is now at its
+  latest release; requirement floors were raised to match what resolves
+  (`clap`/`clap_complete` 4.5 → 4.6, `rustls-pki-types` 1.9 → 1.15).
+  `crypto-common` stays at 0.1.6, held back by the MSRV of `digest` 0.10
+  under `sqlx`; no advisory affects it.
+- `tokio`'s `io-std` feature added for the exec path's stdin pump. Binary
+  size unchanged at 6.2 MB.
+- `Output` grew a `report` helper for the one case the stdout/stderr split
+  does not settle on its own: a line that *is* the command's answer but
+  reads like commentary ("No containers found").
+
+## 0.2.0 — 2026-08-03
 
 Hardening release: no new surface beyond two commands, a lot of
 stability, supply-chain and correctness work.

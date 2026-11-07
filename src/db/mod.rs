@@ -1,7 +1,9 @@
+pub mod format;
 pub mod migrate;
 pub mod mysql;
 pub mod postgres;
 
+pub use format::{DumpFormat, gzip_output_requested};
 pub use mysql::MySqlBackend;
 pub use postgres::PostgresBackend;
 
@@ -91,23 +93,28 @@ pub fn exec_dump(
     }
 }
 
-/// Copy dump file to container, run import command, clean up temp file.
+/// Stream a dump file into the container and run the import command.
 ///
-/// `build_cmd` receives the compression flag and returns a command that reads
+/// `build_cmd` receives the detected format and returns a command that reads
 /// SQL from stdin. This avoids runtime-specific `docker cp` / `container cp`
 /// behavior and works for both Docker and Apple Container.
+///
+/// The format comes from the file's bytes, not its name — see [`format::detect`]
+/// for why that distinction matters.
 pub fn exec_import(
     input_path: &Path,
-    build_cmd: impl FnOnce(bool) -> std::process::Command,
+    build_cmd: impl FnOnce(DumpFormat) -> std::process::Command,
     out: &Output,
 ) -> Result<()> {
-    let gz = is_gzipped(input_path);
+    let dump_format = format::detect(input_path)?;
     let input = File::open(input_path)
         .map_err(|e| anyhow::anyhow!("Cannot open import file {}: {e}", input_path.display()))?;
 
-    out.info("Streaming dump file into container...");
+    out.info(&format!(
+        "Streaming dump file into container ({dump_format})..."
+    ));
 
-    let import_status = build_cmd(gz).stdin(input).status()?;
+    let import_status = build_cmd(dump_format).stdin(input).status()?;
 
     if import_status.success() {
         out.success("Database imported successfully");
@@ -118,10 +125,6 @@ pub fn exec_import(
 }
 
 // ─── compression helpers ──────────────────────────────────────────────────────
-
-pub fn is_gzipped(path: &Path) -> bool {
-    path.to_str().map(|s| s.ends_with(".gz")).unwrap_or(false)
-}
 
 /// Create the local output file for a dump, returning an error with the path
 /// in the message if it fails.
