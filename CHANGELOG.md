@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 — unreleased
+## 0.2.1 — 2026-11-09
 
 Performance and correctness on the exec path: `dip exec` now talks to the
 Docker Engine API directly, and several long-standing pass-through bugs
@@ -187,6 +187,17 @@ around it — swallowed exit codes, chatter on stdout — are fixed.
   (`clap`/`clap_complete` 4.5 → 4.6, `rustls-pki-types` 1.9 → 1.15).
   `crypto-common` stays at 0.1.6, held back by the MSRV of `digest` 0.10
   under `sqlx`; no advisory affects it.
+- A second refresh before tagging: `cargo update` lifts `rustls` 0.23.44 →
+  0.23.46 (RUSTSEC-2026-0285, -0346, -0347, -0348, -0349), `rustls-webpki`
+  0.103.15 → 0.103.16 (-0382), `webpki-roots` 1.0.9 → 1.0.11 (-0381),
+  `ctutils` 0.4.2 → 0.4.8 (-0385) and `tokio` 1.53.1 → 1.54.1 (-0386,
+  unsound `AsyncFd` constructors). The one advisory left, RUSTSEC-2026-0459
+  against `libsqlite3-sys` 0.37, is the same lockfile artefact as `rkyv`
+  above: `sqlx-sqlite` 0.9.0 pins it and nothing newer exists, while dip
+  enables only `mysql` and `postgres`, so the crate is never compiled
+  (`cargo tree -i libsqlite3-sys` is empty). `.cargo/audit.toml` ignores
+  that one advisory with the reasoning inline, to be dropped when
+  `sqlx-sqlite` moves to 0.39.
 - `tokio`'s `io-std` feature added for the exec path's stdin pump. Binary
   size unchanged at 6.2 MB.
 - `Output` grew a `report` helper for the one case the stdout/stderr split

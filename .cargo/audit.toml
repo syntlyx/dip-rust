@@ -1,0 +1,11 @@
+# cargo-audit configuration — consulted by the `audit` job in CI.
+
+[advisories]
+ignore = [
+    # libsqlite3-sys < 0.39 (CVE in the bundled C SQLite). It appears in
+    # Cargo.lock only because lockfiles are resolved with every feature on;
+    # dip enables sqlx's `mysql`/`postgres` features, not `sqlite`, so the
+    # crate is never compiled or linked (`cargo tree -i libsqlite3-sys` is
+    # empty). Drop this entry once sqlx-sqlite > 0.9.0 bumps to 0.39.
+    "RUSTSEC-2026-0459",
+]
